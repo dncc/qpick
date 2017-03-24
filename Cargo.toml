@@ -1,0 +1,17 @@
+[package]
+name = "qi"
+version = "0.1.0"
+authors = ["Dragan Cvetinovic <dcvetinovic@gmail.com>"]
+
+[[bin]]
+name="qi"
+path="src/lib.rs"
+
+[dependencies]
+serde = "*"
+serde_json = "*"
+rayon = "*"
+rand = "*"
+memmap = "*"
+byteorder = "*"
+fst = "*"

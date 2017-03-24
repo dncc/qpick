@@ -1,0 +1,22 @@
+[package]
+name = "qi-bin"
+version = "0.1.0"
+authors = ["dcvetinovic@gmail.com"]
+description = """
+A command line tool for using with qi library.
+"""
+
+[[bin]]
+name = "qi"
+
+[dependencies]
+serde = "*"
+serde_json = "*"
+fst = "*"
+docopt = "0.6"
+qi = { path = "..", version = "0.1.0" }
+rustc-serialize = "0.3"
+
+[profile.release]
+debug = true
+opt-level = 3
