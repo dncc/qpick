@@ -25,8 +25,8 @@ use fst::Error;
 pub mod config;
 pub mod stopwords;
 
-extern crate scoped_threadpool;
-use scoped_threadpool::Pool;
+// extern crate scoped_threadpool;
+// use scoped_threadpool::Pool;
 
 macro_rules! make_static_var_and_getter {
     ($fn_name:ident, $var_name:ident, $t:ty) => (
@@ -341,7 +341,7 @@ fn get_addr_and_len(key: &str, map: &fst::Map) -> Option<(u64, u64)> {
 fn get_shard_ids(pid: usize,
                  ngrams: &HashMap<String, f32>,
                  map: &fst::Map,
-                 ifd: &File) -> Result<Vec<(String, f32)>, Error>{
+                 ifd: &File) -> Result<Vec<(u64, f32)>, Error>{
 
     let mut _ids = HashMap::new();
     let id_size = *get_id_size();
@@ -352,7 +352,7 @@ fn get_shard_ids(pid: usize,
             Some((addr, len)) => {
                 for id_tr in read_bucket(&ifd, addr*id_size as u64, len).iter() {
                     let qid = pqid2qid(id_tr.0 as u64, pid as u64);
-                    let sc = _ids.entry(qid.to_string()).or_insert(0.0);
+                    let sc = _ids.entry(qid).or_insert(0.0);
                     *sc += (id_tr.1 as f32)/100.0 * (n/len as f32).log(2.0);
                 }
             },
@@ -362,14 +362,14 @@ fn get_shard_ids(pid: usize,
 
     // Ok(_ids)
     // let mut v: Vec<_> = _ids.iter().collect();
-    let mut v: Vec<(String, f32)> = _ids.iter().map(|(id, sc)| (id.to_string(), *sc)).collect::<Vec<_>>();
+    let mut v: Vec<(u64, f32)> = _ids.iter().map(|(id, sc)| (*id, *sc)).collect::<Vec<_>>();
     v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse());
-    v.truncate(100);
+    v.truncate(100); //TODO put into config
     Ok(v)
 }
 
-pub struct Qi<'a> {
-    path: &'a str,
+pub struct Qi {
+    path: String,
     config: config::Config,
     stopwords: HashSet<String>,
     terms_relevance: fst::Map,
@@ -381,8 +381,8 @@ pub struct Shard {
     shard: File,
 }
 
-impl<'a> Qi<'a> {
-    fn new(path: &'a str) -> Qi<'a> {
+impl Qi {
+    fn new(path: String) -> Qi {
 
         let c = config::Config::init();
 
@@ -413,19 +413,18 @@ impl<'a> Qi<'a> {
         }
     }
 
-    pub fn from_path(path: &'a str) -> Self {
+    pub fn from_path(path: String) -> Self {
         Qi::new(path)
     }
 
-    fn get_ids(&self, query: String) -> Result<Vec<Vec<(String, f32)>>, Error> {
+    fn get_ids(&self, query: String) -> Result<Vec<Vec<(u64, f32)>>, Error> {
 
         // let n_shards = self.config.last_shard - self.config.first_shard;
         // let mut _ids = vec![vec![]; n_shards as usize];
 
         let n_shards = (self.config.last_shard - self.config.first_shard) as usize;
-        let mut _ids: Arc<Mutex<Vec<Vec<(String, f32)>>>> = Arc::new(Mutex::new(vec![vec![]; n_shards]));
+        let mut _ids: Arc<Mutex<Vec<Vec<(u64, f32)>>>> = Arc::new(Mutex::new(vec![vec![]; n_shards]));
         let (sender, receiver) = mpsc::channel();
-
 
         let ref ngrams: HashMap<String, f32> = parse_ngrams(&query, 2, &self.stopwords, &self.terms_relevance);
 
@@ -463,11 +462,12 @@ impl<'a> Qi<'a> {
             let _ids = _ids.clone();
 
             // TODO initialize a thread/worker pool with maps and shards at Qi init
-            let map = match Map::from_path(format!("./{}/map.{}", self.path, i)) {
+            let map_name = format!("{}/map.{}", self.path, i);
+            let map = match Map::from_path(&map_name) {
                 Ok(map) => map,
-                Err(_) => panic!("Failed to load index map!")
+                Err(_) => panic!("Failed to load index map: {}!", &map_name)
             };
-            let shard = OpenOptions::new().read(true).open(format!("./{}/shard.{}", self.path, i)).unwrap();
+            let shard = OpenOptions::new().read(true).open(format!("{}/shard.{}", self.path, i)).unwrap();
 
             thread::spawn(move || {
 
