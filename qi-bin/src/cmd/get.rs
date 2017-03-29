@@ -28,17 +28,13 @@ struct Args {
     arg_query: String,
 }
 
-// fn parse_line_csv(line: &str) -> Vec<f32> {
-//     line.split(",").filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>()
-// }
-
-
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
     let args: Args = Docopt::new(USAGE)
                             .and_then(|d| d.argv(&argv).decode())
                             .unwrap_or_else(|e| e.exit());
 
-    let r = qi::get_ann_ids(args.arg_query).unwrap();
+    let qi = qi::Qi::from_path("./index");
+    let r = qi.search(&args.arg_query);
     println!("{:?}", r);
 
     Ok(())
