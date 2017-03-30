@@ -25,9 +25,6 @@ use fst::Error;
 pub mod config;
 pub mod stopwords;
 
-// extern crate scoped_threadpool;
-// use scoped_threadpool::Pool;
-
 macro_rules! make_static_var_and_getter {
     ($fn_name:ident, $var_name:ident, $t:ty) => (
     static mut $var_name: Option<$t> = None;
@@ -373,6 +370,7 @@ pub struct Qi {
     config: config::Config,
     stopwords: HashSet<String>,
     terms_relevance: fst::Map,
+    shards: Arc<Vec<Shard>>,
 }
 
 pub struct Shard {
@@ -405,11 +403,25 @@ impl Qi {
             Err(_) => panic!("Failed to load terms rel. map: {}!", &c.terms_relevance_path)
         };
 
+        let mut shards = vec![];
+        for i in c.first_shard..c.last_shard {
+            // TODO initialize a thread/worker pool with maps and shards at Qi init
+            let map_name = format!("{}/map.{}", path, i);
+            let map = match Map::from_path(&map_name) {
+                Ok(map) => map,
+                Err(_) => panic!("Failed to load index map: {}!", &map_name)
+            };
+
+            let shard = OpenOptions::new().read(true).open(format!("{}/shard.{}", path, i)).unwrap();
+            shards.push(Shard{id: i, shard: shard, map: map});
+        };
+
         Qi {
             config: c,
             path: path,
             stopwords: stopwords,
             terms_relevance: terms_relevance,
+            shards: Arc::new(shards),
         }
     }
 
@@ -419,59 +431,22 @@ impl Qi {
 
     fn get_ids(&self, query: String) -> Result<Vec<Vec<(u64, f32)>>, Error> {
 
-        // let n_shards = self.config.last_shard - self.config.first_shard;
-        // let mut _ids = vec![vec![]; n_shards as usize];
-
         let n_shards = (self.config.last_shard - self.config.first_shard) as usize;
         let mut _ids: Arc<Mutex<Vec<Vec<(u64, f32)>>>> = Arc::new(Mutex::new(vec![vec![]; n_shards]));
         let (sender, receiver) = mpsc::channel();
 
         let ref ngrams: HashMap<String, f32> = parse_ngrams(&query, 2, &self.stopwords, &self.terms_relevance);
 
-        // let mut shards: Vec<Shard> = vec![];
-        // for i in self.config.first_shard..self.config.last_shard {
-        //     let shard = OpenOptions::new().read(true).open(format!("./{}/shard.{}", self.path, i)).unwrap();
-        //     let map = match Map::from_path(format!("./{}/map.{}", self.path, i)) {
-        //         Ok(map) => map,
-        //         Err(_) => panic!("Failed to load index map!")
-        //     };
-        //     shards.push(Shard{id: i, map:map, shard:shard});
-        // };
-        // let mut pool = Pool::new(n_shards);
-        // pool.scoped(|scoped|
-        //     for shard in &mut shards {
-        //         scoped.execute(move || {
-        //             let sh_ids = match get_shard_ids(shard.id as usize, &ngrams, &shard.map, &shard.shard) {
-        //                 Ok(ids) => ids,
-        //                 Err(_) => {
-        //                     println!("Failed to retrive ids from shard: {}", shard.id);
-        //                     vec![]
-        //                 }
-        //             };
-        //             let k = (shard.id - self.config.first_shard) as usize;
-        //             _ids[k] = sh_ids;
-        //         });
-        //     }
-        // );
-        // Ok(_ids)
-
         for i in self.config.first_shard..self.config.last_shard {
             let j = (i - self.config.first_shard) as usize;
             let ngrams = ngrams.clone();
             let sender = sender.clone();
             let _ids = _ids.clone();
-
-            // TODO initialize a thread/worker pool with maps and shards at Qi init
-            let map_name = format!("{}/map.{}", self.path, i);
-            let map = match Map::from_path(&map_name) {
-                Ok(map) => map,
-                Err(_) => panic!("Failed to load index map: {}!", &map_name)
-            };
-            let shard = OpenOptions::new().read(true).open(format!("{}/shard.{}", self.path, i)).unwrap();
+            let shards = self.shards.clone();
 
             thread::spawn(move || {
 
-                let sh_ids = match get_shard_ids(j as usize, &ngrams, &map, &shard) {
+                let sh_ids = match get_shard_ids(j as usize, &ngrams, &shards[j].map, &shards[j].shard) {
                     Ok(ids) => ids,
                     Err(_) => {
                         println!("Failed to retrive ids from shard: {}", i);
