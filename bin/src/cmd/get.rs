@@ -33,7 +33,7 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
                             .and_then(|d| d.argv(&argv).decode())
                             .unwrap_or_else(|e| e.exit());
 
-    let qi = qi::Qi::from_path("./index");
+    let qi = qi::Qi::from_path("./index".to_string());
     let r = qi.search(&args.arg_query);
     println!("{:?}", r);
 
