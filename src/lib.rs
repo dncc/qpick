@@ -210,17 +210,11 @@ fn parse_ngrams(query: &str, length: usize, stopwords: &HashSet<String>, tr_map:
 }
 
 // build inverted query index, ngram_i -> [q1, q2, ... qi]
-fn build_inverted_index(iid: u32, input_file: &str) -> Result<(), Error>{
+fn build_inverted_index(iid: u32, input_file: &str, tr_map: &fst::Map) -> Result<(), Error>{
 
     let ref stopwords = match stopwords::load() {
         Ok(stopwords) => stopwords,
         Err(_) => panic!("Failed to load stop-words!")
-    };
-
-    let tr_map_name = "./terms_relevance.fst".to_string();
-    let tr_map = match Map::from_path(&tr_map_name) {
-        Ok(tr_map) => tr_map,
-        Err(_) => panic!("Failed to load terms rel. map!")
     };
 
     let mut qcount = 0;
@@ -262,7 +256,7 @@ fn build_inverted_index(iid: u32, input_file: &str) -> Result<(), Error>{
                 }
         };
 
-        for (ngram, sc) in &parse_ngrams(query, 2, stopwords, &tr_map) {
+        for (ngram, sc) in &parse_ngrams(query, 2, stopwords, tr_map) {
             let imap = invert.entry(ngram.to_string()).or_insert(HashMap::new());
             let pqid = qid2pqid(qid);
             imap.insert(pqid as u32, (sc * 100.0).round() as u8);
@@ -490,14 +484,22 @@ fn main() {
         SHARD_SIZE = Some(c.shard_size);
     }
 
+    let tr_map = match Map::from_path(&c.terms_relevance_path) {
+        Ok(tr_map) => tr_map,
+        Err(_) => panic!("Failed to load terms rel. map!")
+    };
+    let arc_tr_map = Arc::new(tr_map);
+
     let (sender, receiver) = mpsc::channel();
 
     for i in c.first_shard..c.last_shard {
         let sender = sender.clone();
+        let tr_map = arc_tr_map.clone();
+
         let input_file_name = format!("{}/{}.{}.txt", c.dir_path, c.file_name, i);
 
         thread::spawn(move || {
-            build_inverted_index(i, &input_file_name);
+            build_inverted_index(i, &input_file_name, &tr_map);
             sender.send(()).unwrap();
         });
     }
