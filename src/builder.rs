@@ -10,11 +10,11 @@ use std::io::BufWriter;
 use std::fs::OpenOptions;
 use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
 use std::io::SeekFrom;
+use std::collections::HashSet;
 use std::io::prelude::*;
 
 use util;
 use ngrams;
-use stopwords;
 
 fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8)>, id_size: usize) {
     file.seek(SeekFrom::Start(addr)).unwrap();
@@ -31,14 +31,10 @@ pub fn build_shard(
     iid: u32,
     input_file: &str,
     tr_map: &fst::Map,
+    stopwords: &HashSet<String>,
     id_size: usize,
     bk_size: usize,
     nr_shards: usize) -> Result<(), Error>{
-
-    let ref stopwords = match stopwords::load() {
-        Ok(stopwords) => stopwords,
-        Err(_) => panic!("Failed to load stop-words!")
-    };
 
     let mut qcount = 0;
     let mut invert: HashMap<String, HashMap<u32, u8>> = HashMap::new();

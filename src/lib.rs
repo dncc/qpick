@@ -6,18 +6,15 @@ use std::thread;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use std::fs; // remove from here?
-use std::io::BufWriter; // rm ?
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::io::BufReader; // remove from here?
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
-use fst::{Map, MapBuilder}; // remove Builder from here?
+use byteorder::{ByteOrder, LittleEndian};
+use fst::Map;
 use std::io::SeekFrom;
 
 use fst::Error;
@@ -134,7 +131,8 @@ impl Qi {
             SHARD_SIZE = Some(c.shard_size);
         }
 
-        let stopwords = match stopwords::load() {
+        // load stopwords from config path
+        let stopwords = match stopwords::load(&c.stopwords_path) {
             Ok(stopwords) => stopwords,
             Err(_) => panic!("Failed to load stop-words!")
         };
@@ -173,8 +171,7 @@ impl Qi {
 
     fn get_ids(&self, query: String) -> Result<Vec<Vec<(u64, f32)>>, Error> {
 
-        let n_shards = (self.config.last_shard - self.config.first_shard) as usize;
-        let mut _ids: Arc<Mutex<Vec<Vec<(u64, f32)>>>> = Arc::new(Mutex::new(vec![vec![]; n_shards]));
+        let mut _ids: Arc<Mutex<Vec<Vec<(u64, f32)>>>> = Arc::new(Mutex::new(vec![vec![]; self.config.nr_shards]));
         let (sender, receiver) = mpsc::channel();
 
         let ref ngrams: HashMap<String, f32> = ngrams::parse(&query, 2, &self.stopwords, &self.terms_relevance);
@@ -199,7 +196,7 @@ impl Qi {
 
                 // obtaining lock might fail! handle it!
                 let mut _ids = _ids.lock().unwrap();
-                _ids[j] = sh_ids;
+                _ids[i as usize] = sh_ids;
                 sender.send(()).unwrap();
             });
         }
@@ -233,6 +230,11 @@ fn main() {
         SHARD_SIZE = Some(c.shard_size);
     }
 
+    let ref stopwords = match stopwords::load(&c.stopwords_path) {
+        Ok(stopwords) => stopwords,
+        Err(_) => panic!("Failed to load stop-words!")
+    };
+
     let tr_map = match Map::from_path(&c.terms_relevance_path) {
         Ok(tr_map) => tr_map,
         Err(_) => panic!("Failed to load terms rel. map!")
@@ -244,11 +246,13 @@ fn main() {
     for i in c.first_shard..c.last_shard {
         let sender = sender.clone();
         let tr_map = arc_tr_map.clone();
+        let stopwords = stopwords.clone();
 
         let input_file_name = format!("{}/{}.{}.txt", c.dir_path, c.file_name, i);
 
         thread::spawn(move || {
-            builder::build_shard(i, &input_file_name, &tr_map, *get_id_size(), *get_bucket_size(), *get_nr_shards());
+            builder::build_shard(i, &input_file_name, &tr_map, &stopwords,
+                                 *get_id_size(), *get_bucket_size(), *get_nr_shards());
             sender.send(()).unwrap();
         });
     }

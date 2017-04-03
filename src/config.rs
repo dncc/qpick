@@ -17,12 +17,13 @@ pub struct Config {
     pub dir_path: String,
     pub file_name: String,
     pub terms_relevance_path: String,
+    pub stopwords_path: String,
 }
 
 impl Config {
 
     fn load_config_file() -> Result<String, Error> {
-        let f = try!(File::open("config.json"));
+        let f = try!(File::open("/home/dnc/workspace/cliqz/qi/config.json"));
         let mut buf = BufReader::new(&f);
         let mut config = String::new();
         buf.read_to_string(&mut config);
@@ -41,7 +42,7 @@ impl Config {
 
         let nr_shards = match config["nr_shards"] {
             Value::Number(ref nr_shards) => nr_shards.as_u64().unwrap(),
-             _ => 16,
+             _ => 32,
         };
 
         let last_shard = match config["last_shard"] {
@@ -76,7 +77,12 @@ impl Config {
 
         let terms_relevance_path = match config["terms_relevance_path"] {
             Value::String(ref terms_relevance_path) => terms_relevance_path.as_str(),
-            _ => panic!("Failed to load index file name from the config file!"),
+            _ => panic!("Failed to load terms relevance path from the config file!"),
+        };
+
+        let stopwords_path = match config["stopwords_path"] {
+            Value::String(ref stopwords_path) => stopwords_path.as_str(),
+            _ => panic!("Failed to load stopwords path name from the config file!"),
         };
 
         Config {
@@ -88,7 +94,8 @@ impl Config {
             shard_size: shard_size as usize,
             dir_path: dir_path.to_string(),
             file_name: file_name.to_string(),
-            terms_relevance_path: terms_relevance_path.to_string()
+            terms_relevance_path: terms_relevance_path.to_string(),
+            stopwords_path: stopwords_path.to_string()
         }
     }
 }

@@ -4,10 +4,10 @@ use std::io::BufReader;
 use std::fs::File;
 use std::collections::HashSet;
 
-pub fn load() -> Result<HashSet<String>, Error> {
+pub fn load(path: &str) -> Result<HashSet<String>, Error> {
     let mut stopwords = HashSet::new();
 
-    let f = try!(File::open("stopwords.txt"));
+    let f = try!(File::open(path));
     let mut file = BufReader::new(&f);
 
     for line in file.lines() {
