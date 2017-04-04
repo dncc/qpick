@@ -1,4 +1,4 @@
-
+use std::cmp::PartialOrd;
 
 #[inline]
 pub fn qid2pid(qid: u64, nr_shards: usize) -> u64 {
@@ -45,5 +45,14 @@ pub fn elegant_pair_inv(z: u64) -> (u64, u64) {
         (w, z - t - w)
     } else {
         (z - t, w)
+    }
+}
+
+#[inline]
+pub fn max<T:PartialOrd>(a:T, b:T) -> T {
+    if a > b {
+        a
+    } else {
+        b
     }
 }
