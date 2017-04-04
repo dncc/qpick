@@ -89,15 +89,17 @@ fn get_shard_ids(pid: usize,
                 for id_tr in read_bucket(&ifd, addr*id_size as u64, len).iter() {
                     let qid = util::pqid2qid(id_tr.0 as u64, pid as u64, *get_nr_shards());
                     let sc = _ids.entry(qid).or_insert(0.0);
-                    *sc += (id_tr.1 as f32)/100.0 * (n/len as f32).log(2.0);
+                    // TODO cosine similarity, normalize ngrams relevance at indexing time
+                    let mut weight = (id_tr.1 as f32)/100.0 ;
+                    weight = util::max(0.0, weight - (weight - ntr).abs() as f32);
+                    *sc += weight * (n/len as f32).log(2.0);
+
                 }
             },
             None => (),
         }
     }
 
-    // Ok(_ids)
-    // let mut v: Vec<_> = _ids.iter().collect();
     let mut v: Vec<(u64, f32)> = _ids.iter().map(|(id, sc)| (*id, *sc)).collect::<Vec<_>>();
     v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse());
     v.truncate(100); //TODO put into config
@@ -131,13 +133,11 @@ impl Qi {
             SHARD_SIZE = Some(c.shard_size);
         }
 
-        // load stopwords from config path
         let stopwords = match stopwords::load(&c.stopwords_path) {
             Ok(stopwords) => stopwords,
             Err(_) => panic!("Failed to load stop-words!")
         };
 
-        // TODO put the name in config
         let terms_relevance = match Map::from_path(&c.terms_relevance_path) {
             Ok(terms_relevance) => terms_relevance,
             Err(_) => panic!("Failed to load terms rel. map: {}!", &c.terms_relevance_path)
@@ -145,7 +145,6 @@ impl Qi {
 
         let mut shards = vec![];
         for i in c.first_shard..c.last_shard {
-            // TODO initialize a thread/worker pool with maps and shards at Qi init
             let map_name = format!("{}/map.{}", path, i);
             let map = match Map::from_path(&map_name) {
                 Ok(map) => map,
