@@ -2,7 +2,7 @@
 
 extern crate fst;
 extern crate docopt;
-extern crate qi;
+extern crate qpick;
 extern crate serde;
 extern crate serde_json;
 extern crate rustc_serialize;

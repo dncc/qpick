@@ -106,7 +106,7 @@ fn get_shard_ids(pid: usize,
     Ok(v)
 }
 
-pub struct Qi {
+pub struct Qpick {
     path: String,
     config: config::Config,
     stopwords: HashSet<String>,
@@ -120,8 +120,8 @@ pub struct Shard {
     shard: File,
 }
 
-impl Qi {
-    fn new(path: String) -> Qi {
+impl Qpick {
+    fn new(path: String) -> Qpick {
 
         let c = config::Config::init();
 
@@ -155,7 +155,7 @@ impl Qi {
             shards.push(Shard{id: i, shard: shard, map: map});
         };
 
-        Qi {
+        Qpick {
             config: c,
             path: path,
             stopwords: stopwords,
@@ -165,7 +165,7 @@ impl Qi {
     }
 
     pub fn from_path(path: String) -> Self {
-        Qi::new(path)
+        Qpick::new(path)
     }
 
     fn get_ids(&self, query: String) -> Result<Vec<Vec<(u64, f32)>>, Error> {
@@ -173,7 +173,8 @@ impl Qi {
         let mut _ids: Arc<Mutex<Vec<Vec<(u64, f32)>>>> = Arc::new(Mutex::new(vec![vec![]; self.config.nr_shards]));
         let (sender, receiver) = mpsc::channel();
 
-        let ref ngrams: HashMap<String, f32> = ngrams::parse(&query, 2, &self.stopwords, &self.terms_relevance);
+        let ref ngrams: HashMap<String, f32> = ngrams::parse(
+            &query, 2, &self.stopwords, &self.terms_relevance, ngrams::ParseMode::Searching);
 
         for i in self.config.first_shard..self.config.last_shard {
             let j = (i - self.config.first_shard) as usize;

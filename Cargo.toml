@@ -1,10 +1,10 @@
 [package]
-name = "qi"
+name = "qpick"
 version = "0.1.0"
 authors = ["Dragan Cvetinovic <dcvetinovic@gmail.com>"]
 
 [[bin]]
-name="qi"
+name="qpick"
 path="src/lib.rs"
 
 [dependencies]

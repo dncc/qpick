@@ -75,7 +75,7 @@ pub fn build_shard(
                 }
         };
 
-        for (ngram, sc) in &ngrams::parse(query, 2, stopwords, tr_map) {
+        for (ngram, sc) in &ngrams::parse(query, 2, stopwords, tr_map, ngrams::ParseMode::Indexing) {
             let imap = invert.entry(ngram.to_string()).or_insert(HashMap::new());
             let pqid = util::qid2pqid(qid, nr_shards);
             imap.insert(pqid as u32, (sc * 100.0).round() as u8);

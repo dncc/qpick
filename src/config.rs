@@ -23,7 +23,7 @@ pub struct Config {
 impl Config {
 
     fn load_config_file() -> Result<String, Error> {
-        let f = try!(File::open("/home/dnc/workspace/cliqz/qi/config.json"));
+        let f = try!(File::open("/home/dnc/workspace/cliqz/qpick/config.json"));
         let mut buf = BufReader::new(&f);
         let mut config = String::new();
         buf.read_to_string(&mut config);

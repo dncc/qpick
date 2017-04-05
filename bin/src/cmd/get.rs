@@ -2,7 +2,7 @@ use std::io;
 
 use docopt::Docopt;
 
-use qi;
+use qpick;
 use fst::Map;
 
 use std::io::Read;
@@ -33,8 +33,8 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
                             .and_then(|d| d.argv(&argv).decode())
                             .unwrap_or_else(|e| e.exit());
 
-    let qi = qi::Qi::from_path("./index".to_string());
-    let r = qi.search(&args.arg_query);
+    let qpick = qpick::Qpick::from_path("./index".to_string());
+    let r = qpick.search(&args.arg_query);
     println!("{:?}", r);
 
     Ok(())
