@@ -41,7 +41,12 @@ fn get_terms_relevance(terms: &Vec<&str>, tr_map: &fst::Map) -> HashMap<String, 
     terms_rel
 }
 
-pub fn parse(query: &str, length: usize, stopwords: &HashSet<String>, tr_map: &Map)
+pub enum ParseMode {
+   Searching,
+   Indexing
+}
+
+pub fn parse(query: &str, length: usize, stopwords: &HashSet<String>, tr_map: &Map, mode: ParseMode)
                 -> HashMap<String, f32> {
 
     let mut ngrams: HashMap<String, f32> = HashMap::new();
@@ -76,13 +81,36 @@ pub fn parse(query: &str, length: usize, stopwords: &HashSet<String>, tr_map: &M
         }
     }
 
-    // combine the new terms into ngrams a b c d -> ab, ac, bc, bd, cd
+    if termv.len() > 0 {
+        for t in termv.into_iter() {
+            terms.push((t.to_string(), *terms_rel.get(t).unwrap()));
+        }
+    }
+
+    // combine the new terms into ngrams a b c d -> ab, ac, bc, bd, cd and in the search mode: ba ca cb db dc
     if terms.len() > 0 {
         for i in 0..terms.len()-1 {
             ngrams.insert(format!("{}", terms[i].0), terms[i].1);
-            ngrams.insert(format!("{} {}", terms[i].0, terms[i+1].0), terms[i].1+terms[i+1].1);
+            match mode {
+                ParseMode::Indexing => {
+                    ngrams.insert(format!("{} {}", terms[i].0, terms[i+1].0), terms[i].1+terms[i+1].1);
+                },
+                ParseMode::Searching => {
+                    ngrams.insert(format!("{} {}", terms[i].0, terms[i+1].0), terms[i].1+terms[i+1].1);
+                    ngrams.insert(format!("{} {}", terms[i+1].0, terms[i].0), terms[i].1+terms[i+1].1);
+                },
+            };
+
             if i < terms.len()-2 {
-                ngrams.insert(format!("{} {}", terms[i].0, terms[i+2].0), terms[i].1+terms[i+2].1);
+                match mode {
+                    ParseMode::Indexing => {
+                        ngrams.insert(format!("{} {}", terms[i].0, terms[i+2].0), terms[i].1+terms[i+2].1);
+                    },
+                    ParseMode::Searching => {
+                        ngrams.insert(format!("{} {}", terms[i].0, terms[i+2].0), terms[i].1+terms[i+2].1);
+                        ngrams.insert(format!("{} {}", terms[i+2].0, terms[i].0), terms[i].1+terms[i+2].1);
+                    },
+                };
             }
         }
         ngrams.insert(format!("{}", terms[terms.len()-1].0), terms[terms.len()-1].1);
