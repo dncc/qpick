@@ -1,2 +1,8 @@
 target
 Cargo.lock
+*.gz
+*.txt
+*.pyc
+*.kv
+parts
+index
