@@ -26,6 +26,9 @@ pub mod merge;
 pub mod builder;
 pub mod stopwords;
 
+extern crate scoped_threadpool;
+use scoped_threadpool::Pool;
+
 macro_rules! make_static_var_and_getter {
     ($fn_name:ident, $var_name:ident, $t:ty) => (
     static mut $var_name: Option<$t> = None;
@@ -93,6 +96,7 @@ fn get_shard_ids(pid: usize,
                     let mut weight = (id_tr.1 as f32)/100.0 ;
                     weight = util::max(0.0, weight - (weight - ntr).abs() as f32);
                     *sc += weight * (n/len as f32).log(2.0);
+                    // *sc += weight * ntr;
 
                 }
             },
@@ -106,12 +110,14 @@ fn get_shard_ids(pid: usize,
     Ok(v)
 }
 
+use std::cell::RefCell;
 pub struct Qpick {
     path: String,
     config: config::Config,
     stopwords: HashSet<String>,
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
+    thread_pool: RefCell<Pool>,
 }
 
 pub struct Shard {
@@ -155,12 +161,15 @@ impl Qpick {
             shards.push(Shard{id: i, shard: shard, map: map});
         };
 
+        let mut thread_pool = Pool::new(c.last_shard - c.first_shard);
+
         Qpick {
             config: c,
             path: path,
             stopwords: stopwords,
             terms_relevance: terms_relevance,
             shards: Arc::new(shards),
+            thread_pool: RefCell::new(thread_pool),
         }
     }
 
@@ -176,30 +185,33 @@ impl Qpick {
         let ref ngrams: HashMap<String, f32> = ngrams::parse(
             &query, 2, &self.stopwords, &self.terms_relevance, ngrams::ParseMode::Searching);
 
-        for i in self.config.first_shard..self.config.last_shard {
-            let j = (i - self.config.first_shard) as usize;
-            let ngrams = ngrams.clone();
-            let sender = sender.clone();
-            let _ids = _ids.clone();
-            let shards = self.shards.clone();
+        self.thread_pool.borrow_mut().scoped(|scoped| {
 
-            // TODO use a thread pool! don't spawn new threads
-            thread::spawn(move || {
+            for i in self.config.first_shard..self.config.last_shard {
+                let j = (i - self.config.first_shard) as usize;
+                let ngrams = ngrams.clone();
+                let sender = sender.clone();
+                let _ids = _ids.clone();
+                let shards = self.shards.clone();
 
-                let sh_ids = match get_shard_ids(j as usize, &ngrams, &shards[j].map, &shards[j].shard) {
-                    Ok(ids) => ids,
-                    Err(_) => {
-                        println!("Failed to retrive ids from shard: {}", i);
-                        vec![]
-                    }
-                };
+                scoped.execute(move || {
 
-                // obtaining lock might fail! handle it!
-                let mut _ids = _ids.lock().unwrap();
-                _ids[i as usize] = sh_ids;
-                sender.send(()).unwrap();
-            });
-        }
+                    let sh_ids = match get_shard_ids(j as usize, &ngrams, &shards[j].map, &shards[j].shard) {
+                        Ok(ids) => ids,
+                        Err(_) => {
+                            println!("Failed to retrive ids from shard: {}", i);
+                            vec![]
+                        }
+                    };
+
+                    // obtaining lock might fail! handle it!
+                    let mut _ids = _ids.lock().unwrap();
+                    _ids[i as usize] = sh_ids;
+                    sender.send(()).unwrap();
+                });
+            }
+
+        });
 
         for _ in self.config.first_shard..self.config.last_shard {
             receiver.recv().unwrap();

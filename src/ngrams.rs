@@ -15,7 +15,7 @@ fn get_terms_relevance(terms: &Vec<&str>, tr_map: &fst::Map) -> HashMap<String, 
                 terms_rel.insert(t.to_string(), tr as f32);
             },
             None => {
-                missing.insert(t.to_string());
+                missing.insert(t.to_string()); // not used!
             },
         };
     }
