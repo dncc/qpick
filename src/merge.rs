@@ -30,9 +30,9 @@ fn key2npid(key: &str) -> (String, usize) {
     (ngram, pid)
 }
 
+const PROGRESS: u64 = 1_000_000;
 
-
-fn merge(dir_path: String, nr_shards: usize) -> Result<(), Error>{
+pub fn merge(dir_path: &str, nr_shards: usize) -> Result<(), Error>{
     let mut fsts = vec![];
     for i in 0..nr_shards {
         let fst = try!(raw::Fst::from_path(format!("{}/map.{}", dir_path, i)));
@@ -43,6 +43,7 @@ fn merge(dir_path: String, nr_shards: usize) -> Result<(), Error>{
     let wtr = BufWriter::new(try!(File::create(format!("{}/union_map.{}.fst", dir_path, nr_shards))));
     let mut builder = try!(raw::Builder::new(wtr));
 
+    let mut count: u64 = 0;
     while let Some((k, vs)) = union.next() {
         // v = [IndexValue{index:0, value: 1}, IndexValue{index:1, value: 0}, ... ]
         let mut v = vs.to_vec();
@@ -53,6 +54,11 @@ fn merge(dir_path: String, nr_shards: usize) -> Result<(), Error>{
         for iv in v.iter() {
             let k = npid2key(kv, iv.index);
             builder.insert(k, iv.value).unwrap();
+        }
+
+        count += 1;
+        if count % PROGRESS == 0 {
+            println!("Merging {:.1}M ...", count / PROGRESS);
         }
 
     }

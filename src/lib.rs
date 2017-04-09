@@ -230,6 +230,12 @@ impl Qpick {
 
         ids
     }
+
+    pub fn merge(&self) -> Result<(), Error> {
+        println!("Merging index maps from: {:?}", &self.path);
+        merge::merge(&self.path, (self.config.last_shard - self.config.first_shard) as usize)
+    }
+
 }
 
 fn main() {

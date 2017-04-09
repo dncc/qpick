@@ -97,7 +97,7 @@ pub fn parse(query: &str, length: usize, stopwords: &HashSet<String>, tr_map: &M
                 },
                 ParseMode::Searching => {
                     ngrams.insert(format!("{} {}", terms[i].0, terms[i+1].0), terms[i].1+terms[i+1].1);
-                    ngrams.insert(format!("{} {}", terms[i+1].0, terms[i].0), terms[i].1+terms[i+1].1);
+                    ngrams.insert(format!("{} {}", terms[i+1].0, terms[i].0), 0.85*(terms[i].1+terms[i+1].1));
                 },
             };
 
@@ -108,7 +108,7 @@ pub fn parse(query: &str, length: usize, stopwords: &HashSet<String>, tr_map: &M
                     },
                     ParseMode::Searching => {
                         ngrams.insert(format!("{} {}", terms[i].0, terms[i+2].0), terms[i].1+terms[i+2].1);
-                        ngrams.insert(format!("{} {}", terms[i+2].0, terms[i].0), terms[i].1+terms[i+2].1);
+                        ngrams.insert(format!("{} {}", terms[i+2].0, terms[i].0), 0.75*(terms[i].1+terms[i+2].1));
                     },
                 };
             }
