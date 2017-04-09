@@ -16,6 +16,31 @@ use std::io::prelude::*;
 use util;
 use ngrams;
 
+use std::collections::BinaryHeap;
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct Qid {
+    id: u32,
+    sc: u8,
+}
+
+// The priority queue depends on `Ord`.
+// Explicitly implement the trait so the queue becomes a min-heap
+// instead of a max-heap.
+impl Ord for Qid {
+    fn cmp(&self, other: &Qid) -> Ordering {
+    // Notice that the we flip the ordering here
+    other.sc.cmp(&self.sc)
+}
+}
+
+// `PartialOrd` needs to be implemented as well.
+impl PartialOrd for Qid {
+    fn partial_cmp(&self, other: &Qid) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8)>, id_size: usize) {
     file.seek(SeekFrom::Start(addr)).unwrap();
     let mut w = Vec::with_capacity(data.len()*id_size);
@@ -37,7 +62,7 @@ pub fn build_shard(
     nr_shards: usize) -> Result<(), Error>{
 
     let mut qcount = 0;
-    let mut invert: HashMap<String, HashMap<u32, u8>> = HashMap::new();
+    let mut invert: HashMap<String, BinaryHeap<Qid>> = HashMap::new();
 
     let f = try!(File::open(input_file));
     let mut reader = BufReader::with_capacity(5 * 1024 * 1024, &f);
@@ -76,9 +101,20 @@ pub fn build_shard(
         };
 
         for (ngram, sc) in &ngrams::parse(query, 2, stopwords, tr_map, ngrams::ParseMode::Indexing) {
-            let imap = invert.entry(ngram.to_string()).or_insert(HashMap::new());
-            let pqid = util::qid2pqid(qid, nr_shards);
-            imap.insert(pqid as u32, (sc * 100.0).round() as u8);
+            let imap = invert.entry(ngram.to_string()).or_insert(BinaryHeap::new());
+
+            let pqid = util::qid2pqid(qid, nr_shards) as u32;
+            let qsc = (sc * 100.0).round() as u8;
+            let qid_obj = Qid{ id: pqid, sc: qsc};
+
+            if imap.len() >= bk_size {
+                let mut mqid = imap.peek_mut().unwrap();
+                if qid_obj < *mqid { //in fact qid.sc > mqid.sc because the ordering is flipped
+                    *mqid = qid_obj
+                }
+            } else {
+                imap.push(qid_obj);
+            }
         }
 
         qcount += 1;
@@ -88,8 +124,8 @@ pub fn build_shard(
     }
 
     // sort inverted query index by keys (ngrams) and store it to fst file
-    let mut vinvert: Vec<(String, HashMap<u32, u8>)> = invert.into_iter()
-        .map(|(ngram, ids)| (ngram, ids))
+    let mut vinvert: Vec<(String, BinaryHeap<Qid>)> = invert.into_iter()
+        .map(|(ngram, qids)| (ngram, qids))
         .collect();
 
     println!("Sorting ngrams...");
@@ -117,15 +153,15 @@ pub fn build_shard(
         .open(&index_file_name).unwrap();
 
     let mut cursor: u64 = 0;
-    for (ngram, ids_tr) in vinvert.into_iter() {
-        let ids_len: u64 = ids_tr.len() as u64;
-        if ids_len > bk_size as u64 {
-            continue
+    for (ngram, qids) in vinvert.into_iter() {
+        let qids_len: u64 = qids.len() as u64;
+        if qids_len > bk_size as u64 {
+            panic!("Error bucket for {:?} is has more than {:?} elements", ngram, bk_size);
         }
-        let ids = ids_tr.iter().map(|(k,v)| (*k, *v)).collect::<Vec<(u32, u8)>>();
+        let ids = qids.iter().map(|qid| (qid.id, qid.sc)).collect::<Vec<(u32, u8)>>();
         write_bucket(index_file, cursor*id_size as u64, &ids, id_size);
-        build.insert(ngram, util::elegant_pair(cursor, ids_len));
-        cursor += ids_len;
+        build.insert(ngram, util::elegant_pair(cursor, qids_len));
+        cursor += qids_len;
     }
 
     // Finish construction of the map and flush its contents to disk.
