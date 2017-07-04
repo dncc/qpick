@@ -17,10 +17,10 @@ use Error;
 const USAGE: &'static str = "
 Get vector ids and scores for ANN.
 Usage:
-    mann get [options] <query>
-    mann get --help
+    qpick get [options] <query>
+    qpick get --help
 Options:
-    -h, --help  Arg qurey is a query string.
+    -h, --help  Arg query is a query string.
 ";
 
 #[derive(Debug, RustcDecodable)]

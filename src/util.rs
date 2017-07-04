@@ -1,5 +1,7 @@
 use std::cmp::PartialOrd;
 
+static KEY_SEPARATOR: &'static str = ".";
+
 #[inline]
 pub fn qid2pid(qid: u64, nr_shards: usize) -> u64 {
     qid % nr_shards as u64
@@ -14,6 +16,19 @@ pub fn qid2pqid(qid: u64, nr_shards: usize) -> u64 {
 pub fn pqid2qid(pqid: u64, pid: u64, nr_shards: usize) -> u64 {
     (pqid << (nr_shards as f32).log(2.0) as u64) + pid
 }
+
+#[inline]
+pub fn ngram2key(ngram: &str, shard_id: u32) -> String {
+    format!("{}.{}", ngram, shard_id)
+}
+
+#[inline]
+pub fn key2ngram(key: String) -> String {
+    let mut ngram = key.clone();
+    ngram.truncate(key.rfind(KEY_SEPARATOR).unwrap());
+    ngram
+}
+
 
 /*
     Elegant pairing function http://szudzik.com/ElegantPairing.pdf

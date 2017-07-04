@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use fst::{Error, raw, Streamer};
 
-static SEPARATOR: &'static str = "\u{0}";
+static SEPARATOR: &'static str = "\u{0}\u{0}";
 
 #[inline]
 fn npid2key(ngramv: & mut Vec<u8>, pid: usize) -> String {

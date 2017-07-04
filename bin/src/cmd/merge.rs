@@ -8,10 +8,10 @@ use qpick;
 const USAGE: &'static str = "
 Get vector ids and scores for ANN.
 Usage:
-    mann merge [options] <path>
-    mann merge --help
+    qpick merge [options] <path>
+    qpick merge --help
 Options:
-    -h, --help  Arg qurey is a query string.
+    -h, --help  Arg path is a path string.
 ";
 
 #[derive(Debug, RustcDecodable)]

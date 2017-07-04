@@ -87,7 +87,7 @@ pub fn parse(query: &str, length: usize, stopwords: &HashSet<String>, tr_map: &M
         }
     }
 
-    // combine the new terms into ngrams a b c d -> ab, ac, bc, bd, cd and in the search mode: ba ca cb db dc
+    // generate ngrams as combination of terms a b c d -> ab, ac, bc, bd, cd and in the search mode: ba ca cb db dc
     if terms.len() > 0 {
         for i in 0..terms.len()-1 {
             ngrams.insert(format!("{}", terms[i].0), terms[i].1);

@@ -68,8 +68,8 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8)> {
 
 // reading part
 #[inline]
-fn get_addr_and_len(key: &str, map: &fst::Map) -> Option<(u64, u64)> {
-    match map.get(key) {
+fn get_addr_and_len(ngram: &str, pid: usize, map: &fst::Map) -> Option<(u64, u64)> {
+    match map.get(util::ngram2key(ngram, pid as u32)) {
         Some(val) => {
             return Some(util::elegant_pair_inv(val))
         },
@@ -85,19 +85,18 @@ fn get_shard_ids(pid: usize,
     let mut _ids = HashMap::new();
     let id_size = *get_id_size();
     let n = *get_shard_size() as f32;
-
     for (ngram, ntr) in ngrams {
-        match get_addr_and_len(ngram, &map) {
+        match get_addr_and_len(ngram, pid, &map) {
             Some((addr, len)) => {
                 for id_tr in read_bucket(&ifd, addr*id_size as u64, len).iter() {
                     let qid = util::pqid2qid(id_tr.0 as u64, pid as u64, *get_nr_shards());
                     let sc = _ids.entry(qid).or_insert(0.0);
+                    // println!("{:?} {:?} {:?}", ngram, qid, sc);
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
-                    let mut weight = (id_tr.1 as f32)/100.0 ;
-                    weight = util::max(0.0, weight - (weight - ntr).abs() as f32);
-                    *sc += weight * (n/len as f32).log(2.0);
                     // *sc += weight * ntr;
-
+                    let mut weight = (id_tr.1 as f32)/100.0 ;
+                    weight = util::max(0.0, ntr - (ntr - weight).abs() as f32);
+                    *sc += weight * (n/len as f32).log(2.0);
                 }
             },
             None => (),

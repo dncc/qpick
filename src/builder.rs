@@ -25,13 +25,11 @@ struct Qid {
 }
 
 // The priority queue depends on `Ord`.
-// Explicitly implement the trait so the queue becomes a min-heap
-// instead of a max-heap.
+// Explicitly implement the trait to turn the queue into a min-heap (by default it's a max-heap).
 impl Ord for Qid {
     fn cmp(&self, other: &Qid) -> Ordering {
-    // Notice that the we flip the ordering here
-    other.sc.cmp(&self.sc)
-}
+        other.sc.cmp(&self.sc) // flipped ordering here!
+    }
 }
 
 // `PartialOrd` needs to be implemented as well.
@@ -109,7 +107,7 @@ pub fn build_shard(
 
             if imap.len() >= bk_size {
                 let mut mqid = imap.peek_mut().unwrap();
-                if qid_obj < *mqid { //in fact qid.sc > mqid.sc because the ordering is flipped
+                if qid_obj < *mqid { //in fact qid.sc > mqid.sc, due to the flipped ordering
                     *mqid = qid_obj
                 }
             } else {
@@ -160,7 +158,7 @@ pub fn build_shard(
         }
         let ids = qids.iter().map(|qid| (qid.id, qid.sc)).collect::<Vec<(u32, u8)>>();
         write_bucket(index_file, cursor*id_size as u64, &ids, id_size);
-        build.insert(ngram, util::elegant_pair(cursor, qids_len));
+        build.insert(util::ngram2key(&ngram, iid), util::elegant_pair(cursor, qids_len));
         cursor += qids_len;
     }
 
