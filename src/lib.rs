@@ -69,7 +69,8 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8)> {
 // reading part
 #[inline]
 fn get_addr_and_len(ngram: &str, pid: usize, map: &fst::Map) -> Option<(u64, u64)> {
-    match map.get(util::ngram2key(ngram, pid as u32)) {
+    let ref key = util::ngram2key(ngram, pid as u32);
+    match map.get(key) {
         Some(val) => {
             return Some(util::elegant_pair_inv(val))
         },
@@ -86,6 +87,7 @@ fn get_shard_ids(pid: usize,
     let id_size = *get_id_size();
     let n = *get_shard_size() as f32;
     for (ngram, ntr) in ngrams {
+
         match get_addr_and_len(ngram, pid, &map) {
             Some((addr, len)) => {
                 for id_tr in read_bucket(&ifd, addr*id_size as u64, len).iter() {

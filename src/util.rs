@@ -1,6 +1,6 @@
 use std::cmp::PartialOrd;
 
-static KEY_SEPARATOR: &'static str = ".";
+static KEY_SEPARATOR: &'static str = ":";
 
 #[inline]
 pub fn qid2pid(qid: u64, nr_shards: usize) -> u64 {
@@ -19,7 +19,7 @@ pub fn pqid2qid(pqid: u64, pid: u64, nr_shards: usize) -> u64 {
 
 #[inline]
 pub fn ngram2key(ngram: &str, shard_id: u32) -> String {
-    format!("{}.{}", ngram, shard_id)
+    format!("{}:{}", ngram, shard_id)
 }
 
 #[inline]

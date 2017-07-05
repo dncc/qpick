@@ -99,7 +99,7 @@ pub fn build_shard(
         };
 
         for (ngram, sc) in &ngrams::parse(query, 2, stopwords, tr_map, ngrams::ParseMode::Indexing) {
-            let imap = invert.entry(ngram.to_string()).or_insert(BinaryHeap::new());
+            let imap = invert.entry(util::ngram2key(ngram, iid)).or_insert(BinaryHeap::new());
 
             let pqid = util::qid2pqid(qid, nr_shards) as u32;
             let qsc = (sc * 100.0).round() as u8;
@@ -123,10 +123,10 @@ pub fn build_shard(
 
     // sort inverted query index by keys (ngrams) and store it to fst file
     let mut vinvert: Vec<(String, BinaryHeap<Qid>)> = invert.into_iter()
-        .map(|(ngram, qids)| (ngram, qids))
+        .map(|(key, qids)| (key, qids))
         .collect();
 
-    println!("Sorting ngrams...");
+    println!("Sorting keys...");
     vinvert.sort_by(|a, b| {a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal)});
 
     // create index dir if it doesn't exist
@@ -151,14 +151,15 @@ pub fn build_shard(
         .open(&index_file_name).unwrap();
 
     let mut cursor: u64 = 0;
-    for (ngram, qids) in vinvert.into_iter() {
+    for (key, qids) in vinvert.into_iter() {
         let qids_len: u64 = qids.len() as u64;
         if qids_len > bk_size as u64 {
-            panic!("Error bucket for {:?} is has more than {:?} elements", ngram, bk_size);
+            panic!("Error bucket for {:?} is has more than {:?} elements", key, bk_size);
         }
         let ids = qids.iter().map(|qid| (qid.id, qid.sc)).collect::<Vec<(u32, u8)>>();
         write_bucket(index_file, cursor*id_size as u64, &ids, id_size);
-        build.insert(util::ngram2key(&ngram, iid), util::elegant_pair(cursor, qids_len));
+        build.insert(key, util::elegant_pair(cursor, qids_len)).unwrap();
+
         cursor += qids_len;
     }
 
