@@ -23,6 +23,7 @@ pub mod util;
 pub mod config;
 pub mod ngrams;
 pub mod merge;
+pub mod shard;
 pub mod builder;
 pub mod stopwords;
 
@@ -237,6 +238,10 @@ impl Qpick {
         merge::merge(&self.path, (self.config.last_shard - self.config.first_shard) as usize)
     }
 
+    pub fn shard(file_path: String, nr_shards: usize, output_dir: String) -> Result<(), std::io::Error> {
+        println!("Creating {:?} shards from {:?} to {:?}", nr_shards, file_path, output_dir);
+        shard::shard(&file_path, nr_shards, &output_dir)
+    }
 }
 
 fn main() {

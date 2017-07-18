@@ -23,12 +23,13 @@ pub fn ngram2key(ngram: &str, shard_id: u32) -> String {
 }
 
 #[inline]
-pub fn key2ngram(key: String) -> String {
-    let mut ngram = key.clone();
-    ngram.truncate(key.rfind(KEY_SEPARATOR).unwrap());
-    ngram
-}
+pub fn key2ngram(key: String) -> (String, u32) {
+    let i = key.rfind(KEY_SEPARATOR).unwrap();
+    let ngram = (&key[..i]).to_string();
+    let pid = &key[i+1..].parse::<u32>().unwrap();
 
+    (ngram, *pid)
+}
 
 /*
     Elegant pairing function http://szudzik.com/ElegantPairing.pdf
@@ -70,4 +71,59 @@ pub fn max<T:PartialOrd>(a:T, b:T) -> T {
     } else {
         b
     }
+}
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+// A Fast, Minimal Memory, Consistent Hash Algorithm by John Lamping and Eric Veach:
+// https://arxiv.org/pdf/1406.2294.pdf
+// It outputs a bucket number in the range [0, num_buckets).
+pub fn jump_consistent_hash(mut key: u64, num_buckets: u32) -> u32 {
+
+    assert!(num_buckets > 0);
+
+    let mut b: i64 = -1;
+    let mut j: i64 = 0;
+
+    while j < num_buckets as i64 {
+        b = j;
+        key = key.wrapping_mul(2862933555777941757).wrapping_add(1);
+        j = ((b.wrapping_add(1) as f64) * ((1i64 << 31) as f64) /
+                                          ((key >> 33).wrapping_add(1) as f64)) as i64;
+    }
+
+    b as u32
+}
+
+#[inline]
+pub fn jump_consistent_hash_str(key: &str, num_buckets: u32) -> u32 {
+
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+
+    jump_consistent_hash(hasher.finish(), num_buckets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jump_consistent_hash_str_test() {
+        assert_eq!(16, jump_consistent_hash_str("how to put on thai fishing pants", 32));
+    }
+
+    #[test]
+    fn jump_consistent_hash_test() {
+        assert_eq!(7, jump_consistent_hash(1000011111111, 32));
+        assert_eq!(0, jump_consistent_hash(1000011111111, 1));
+    }
+
+    #[test]
+    #[should_panic]
+    fn jump_consistent_hash_panic_test() {
+        assert_eq!(7, jump_consistent_hash(1000011111111, 0));
+    }
+
 }

@@ -52,6 +52,7 @@ struct Args {
 enum Command {
     // Index,
     Get,
+    Shard,
     Merge,
 }
 
@@ -63,6 +64,7 @@ impl Command {
         match self {
             // Index => cmd::index::run(argv),
             Get => cmd::get::run(argv),
+            Shard => cmd::shard::run(argv),
             Merge => cmd::merge::run(argv),
         }
     }
