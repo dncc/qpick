@@ -81,7 +81,8 @@ fn get_addr_and_len(ngram: &str, pid: usize, map: &fst::Map) -> Option<(u64, u64
 fn get_shard_ids(pid: usize,
                  ngrams: &HashMap<String, f32>,
                  map: &fst::Map,
-                 ifd: &File) -> Result<Vec<(u64, f32)>, Error>{
+                 ifd: &File,
+                 count: usize) -> Result<Vec<(u64, f32)>, Error>{
 
     let mut _ids = HashMap::new();
     let id_size = *get_id_size();
@@ -114,7 +115,7 @@ fn get_shard_ids(pid: usize,
 
     let mut v: Vec<(u64, f32)> = _ids.iter().map(|(id, sc)| (*id, *sc)).collect::<Vec<_>>();
     v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse());
-    v.truncate(100); //TODO put into config
+    v.truncate(count);
     Ok(v)
 }
 
@@ -132,6 +133,20 @@ pub struct Shard {
     id: u32,
     map: fst::Map,
     shard: File,
+}
+
+pub struct QpickResults {
+    pub items_iter: std::vec::IntoIter<(u64, f32)>,
+}
+
+impl QpickResults {
+    pub fn new(mut items_iter: std::vec::IntoIter<(u64, f32)>) -> QpickResults {
+        QpickResults { items_iter: items_iter }
+    }
+
+    pub fn next(&mut self) -> Option<(u64, f32)> {
+        <std::vec::IntoIter<(u64, f32)> as std::iter::Iterator>::next(&mut self.items_iter)
+    }
 }
 
 impl Qpick {
@@ -185,7 +200,19 @@ impl Qpick {
         Qpick::new(path)
     }
 
-    fn get_ids(&self, query: String) -> Result<Vec<(u64, f32)>, Error> {
+    fn get_ids(&self, query: String, count: Option<usize>) -> Result<Vec<(u64, f32)>, Error> {
+
+        if query == "" || count == Some(0) || count == None {
+            return Ok(vec![])
+        }
+
+        let shard_count = match count {
+           Some( 1...10) => 30,
+           Some(10...20) => 50,
+           Some(20...30) => 70,
+           Some(30...50) => 90,
+                 _ => count.unwrap(),
+        };
 
         let mut _ids: Arc<Mutex<HashMap<u64, f32>>> = Arc::new(Mutex::new(HashMap::new()));
         let (sender, receiver) = mpsc::channel();
@@ -216,7 +243,11 @@ impl Qpick {
 
                 scoped.execute(move || {
 
-                    let sh_ids = match get_shard_ids(j as usize, &sh_ngrams, &shards[j].map, &shards[j].shard) {
+                    let sh_ids = match get_shard_ids(j as usize,
+                                                     &sh_ngrams,
+                                                     &shards[j].map,
+                                                     &shards[j].shard,
+                                                     shard_count) {
                         Ok(ids) => ids,
                         Err(_) => {
                             println!("Failed to retrive ids from shard: {}", j);
@@ -249,16 +280,23 @@ impl Qpick {
         //      use a different data structure
         let mut vdata: Vec<(u64, f32)> = data.into_iter().map(|(id, sc)| (id, sc)).collect();
         vdata.sort_by(|a, b| {a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse()});
+        vdata.truncate(count.unwrap_or(100)); //TODO put into config
         Ok(vdata)
     }
 
+    // TODO deprecated, to be removed
     pub fn search(&self, query: &str) -> String {
-        let ids = match self.get_ids(query.to_string()) {
+        let ids = match self.get_ids(query.to_string(), Some(100)) {
             Ok(ids) => serde_json::to_string(&ids).unwrap(),
             Err(err) => err.to_string(),
         };
 
         ids
+    }
+
+    pub fn get(&self, query: &str, count: u32) -> QpickResults {
+        let mut ids = self.get_ids(query.to_string(), Some(count as usize)).unwrap();
+        QpickResults::new(ids.into_iter())
     }
 
     pub fn merge(&self) -> Result<(), Error> {

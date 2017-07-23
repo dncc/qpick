@@ -3,6 +3,6 @@
     "bucket_size": 10000,
     "nr_shards": 16,
     "shard_size": 250000000,
-    "terms_relevance_path": "../qpick/terms_relevance.fst",
-    "stopwords_path": "../qpick/stopwords.txt"
+    "terms_relevance_path": "/home/dnc/workspace/cliqz/qpick/terms_relevance.fst",
+    "stopwords_path": "/home/dnc/workspace/cliqz/qpick/stopwords.txt"
 }
