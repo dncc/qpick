@@ -3,18 +3,14 @@ use std::cmp::PartialOrd;
 static KEY_SEPARATOR: &'static str = ":";
 
 #[inline]
-pub fn qid2pid(qid: u64, nr_shards: usize) -> u64 {
-    qid % nr_shards as u64
+pub fn qid2pqid(qid: u64, nr_shards: usize) -> (u64, u8) {
+    assert!(nr_shards < 256);
+    (qid >> (nr_shards as f32).log(2.0) as u64, (qid % nr_shards as u64) as u8)
 }
 
 #[inline]
-pub fn qid2pqid(qid: u64, nr_shards: usize) -> u64 {
-    qid >> (nr_shards as f32).log(2.0) as u64
-}
-
-#[inline]
-pub fn pqid2qid(pqid: u64, pid: u64, nr_shards: usize) -> u64 {
-    (pqid << (nr_shards as f32).log(2.0) as u64) + pid
+pub fn pqid2qid(pqid: u64, reminder: u8, nr_shards: usize) -> u64 {
+    (pqid << (nr_shards as f32).log(2.0) as u64) + reminder as u64
 }
 
 #[inline]
@@ -97,7 +93,7 @@ pub fn jump_consistent_hash(mut key: u64, num_buckets: u32) -> u32 {
 }
 
 #[inline]
-pub fn jump_consistent_hash_str(key: &str, num_buckets: u32) -> u32 {
+pub fn jump_consistent_hash_str(key: &str, num_buckets: u32) -> u32 { //
 
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);

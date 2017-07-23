@@ -1,12 +1,8 @@
 {
-    "id_size": 5,
+    "id_size": 6,
     "bucket_size": 10000,
-    "first_shard": 0,
-    "last_shard": 4,
-    "nr_shards": 32,
+    "nr_shards": 16,
     "shard_size": 250000000,
-    "dir_path": "./parts",
-    "file_name": "p",
     "terms_relevance_path": "../qpick/terms_relevance.fst",
     "stopwords_path": "../qpick/stopwords.txt"
 }

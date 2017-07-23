@@ -1,5 +1,3 @@
-use std::io;
-
 use docopt::Docopt;
 use Error;
 

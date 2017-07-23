@@ -50,9 +50,9 @@ struct Args {
 #[derive(Debug, RustcDecodable)]
 
 enum Command {
-    // Index,
     Get,
     Shard,
+    Index,
     Merge,
 }
 
@@ -65,6 +65,7 @@ impl Command {
             // Index => cmd::index::run(argv),
             Get => cmd::get::run(argv),
             Shard => cmd::shard::run(argv),
+            Index => cmd::index::run(argv),
             Merge => cmd::merge::run(argv),
         }
     }

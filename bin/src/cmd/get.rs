@@ -1,16 +1,8 @@
-use std::io;
-
 use docopt::Docopt;
 
 use qpick;
-use fst::Map;
 
-use std::io::Read;
-use std::fs::File;
 use std::result::Result;
-
-use serde_json;
-use std::fs::OpenOptions;
 
 use Error;
 

@@ -12,16 +12,21 @@ use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
 use std::io::SeekFrom;
 use std::collections::HashSet;
 use std::io::prelude::*;
+use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread;
 
 use util;
 use ngrams;
+use config;
 
 use std::collections::BinaryHeap;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Qid {
-    id: u32,
-    sc: u8,
+    id: u32,        // query id: is equal to globally_unique_u64_query_id << log(nr_shards), unique on shard level
+    reminder: u8,   // reminder: from globally_unique_u64_query_id % number_of_shards
+    sc: u8,         // score: ngram relevance/score for the query
 }
 
 // The priority queue depends on `Ord`.
@@ -39,27 +44,71 @@ impl PartialOrd for Qid {
     }
 }
 
-fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8)>, id_size: usize) {
+fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: usize) {
     file.seek(SeekFrom::Start(addr)).unwrap();
     let mut w = Vec::with_capacity(data.len()*id_size);
     for n in data.iter() {
         w.write_u32::<LittleEndian>(n.0).unwrap();
         w.write_u8(n.1).unwrap();
+        w.write_u8(n.2).unwrap();
     };
     file.write_all(w.as_slice());
 }
 
+pub fn index(input_dir: &str,
+             shard_name: &str,
+             first_shard: usize,
+             last_shard: usize,
+             output_dir: &str) -> Result<(), Error> {
+
+    let c = config::Config::init();
+
+    // create index dir if it doesn't exist
+    try!(fs::create_dir_all(output_dir));
+
+    let (sender, receiver) = mpsc::channel();
+
+    for i in first_shard..last_shard {
+        let sender = sender.clone();
+        let out_dir = output_dir.clone();
+
+        let id_size = c.id_size.clone();
+        let bucket_size = c.bucket_size.clone();
+        let nr_shards = c.nr_shards.clone();
+
+        let input_file_name = format!("{}/{}.{}", input_dir, shard_name, i);
+        let out_shard_name = format!("{}/{}.{}", output_dir, "shard", i);
+        let out_map_name = format!("{}/{}.{}", output_dir, "map", i);
+
+        thread::spawn(move || {
+            build_shard(i as u32, &input_file_name, id_size, bucket_size,
+                        nr_shards, &out_shard_name, &out_map_name);
+
+            sender.send(()).unwrap();
+        });
+    }
+
+    for _ in first_shard..last_shard {
+        receiver.recv().unwrap();
+    }
+
+    println!("Compiled {} shards.", last_shard - first_shard);
+
+    Ok(())
+}
+
 // build inverted query index, ngram_i -> [q1, q2, ... qi]
 pub fn build_shard(
+
     iid: u32,
     input_file: &str,
-    tr_map: &fst::Map,
-    stopwords: &HashSet<String>,
     id_size: usize,
     bk_size: usize,
-    nr_shards: usize) -> Result<(), Error>{
+    nr_shards: usize,
+    out_shard_name: &str,
+    out_map_name: &str) -> Result<(), Error>{
 
-    let mut qcount = 0;
+    let mut qcount: u64 = 0;
     let mut invert: HashMap<String, BinaryHeap<Qid>> = HashMap::new();
 
     let f = try!(File::open(input_file));
@@ -76,11 +125,11 @@ pub fn build_shard(
 
         let mut split = line.trim().split("\t");
 
-        let qid = match split.next() {
-            Some(qid) => match qid.parse::<u64>() {
+        let pqid = match split.next() {
+            Some(pqid) => match pqid.parse::<u32>() {
                 Ok(n) => n,
                 Err(err) => {
-                    println!("Shard {:?} - failed to parse query id {:?}: {:?}", iid, qid, err);
+                    println!("Shard {:?} - failed to parse query id {:?}: {:?}", iid, pqid, err);
                     continue
                 }
             },
@@ -90,33 +139,57 @@ pub fn build_shard(
             }
         };
 
-        let query = match split.next() {
-                Some(q) => q.trim(),
+        let reminder = match split.next() {
+            Some(r) => match r.parse::<u8>() {
+                Ok(n) => n,
+                Err(err) => {
+                    println!("Shard {:?} - failed to parse query id {:?}: {:?}", iid, pqid, err);
+                    continue
+                }
+            },
+            None => {
+                println!("Shard {:?} - No query id found", iid);
+                continue
+            }
+        };
+
+        let ngram = match split.next() {
+                Some(ng) => ng.trim(),
                 None => {
-                        println!("Shard {:?} - No query found", iid);
+                        println!("Shard {:?} - No ngram found", iid);
                         continue
                 }
         };
 
-        for (ngram, sc) in &ngrams::parse(query, 2, stopwords, tr_map, ngrams::ParseMode::Indexing) {
-            let imap = invert.entry(util::ngram2key(ngram, iid)).or_insert(BinaryHeap::new());
-
-            let pqid = util::qid2pqid(qid, nr_shards) as u32;
-            let qsc = (sc * 100.0).round() as u8;
-            let qid_obj = Qid{ id: pqid, sc: qsc};
-
-            if imap.len() >= bk_size {
-                let mut mqid = imap.peek_mut().unwrap();
-                if qid_obj < *mqid { //in fact qid.sc > mqid.sc, due to the flipped ordering
-                    *mqid = qid_obj
+        let nsc = match split.next() {
+            Some(nsc) => match nsc.parse::<u8>() {
+                Ok(n) => n,
+                Err(err) => {
+                    println!("Shard {:?} - failed to parse ngram score {:?}: {:?}", iid, nsc, err);
+                    continue
                 }
-            } else {
-                imap.push(qid_obj);
+            },
+            None => {
+                println!("Shard {:?} - No query score found", iid);
+                continue
             }
+        };
+
+        let imap = invert.entry(ngram.to_string()).or_insert(BinaryHeap::new());
+
+        let qid_obj = Qid{ id: pqid, reminder: reminder, sc: nsc};
+
+        if imap.len() >= bk_size {
+            let mut mqid = imap.peek_mut().unwrap();
+            if qid_obj < *mqid { //in fact qid.sc > mqid.sc, due to the flipped ordering
+                *mqid = qid_obj
+            }
+        } else {
+            imap.push(qid_obj);
         }
 
         qcount += 1;
-        if qcount as u32 % 1_000_000 == 0 {
+        if qcount as u64 % 1_000_000 == 0 {
             println!("Reading {:.1}M", qcount / 1_000_000);
         }
     }
@@ -126,29 +199,24 @@ pub fn build_shard(
         .map(|(key, qids)| (key, qids))
         .collect();
 
-    println!("Sorting keys...");
+    println!("Sorting {:.1}M keys...", vinvert.len()/1_000_000);
     vinvert.sort_by(|a, b| {a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal)});
 
-    // create index dir if it doesn't exist
-    try!(fs::create_dir_all("./index"));
-
-    let index_map_file_name = "./index/map.".to_string() + &iid.to_string();
     // remove previous index first if exists
-    fs::remove_file(&index_map_file_name);
-    let mut wtr = BufWriter::new(try!(File::create(&index_map_file_name)));
+    fs::remove_file(out_map_name);
+    let mut wtr = BufWriter::new(try!(File::create(out_map_name)));
 
-    println!("Map {} init...", index_map_file_name);
+    println!("Map {} init...", out_map_name);
     // Create a builder that can be used to insert new key-value pairs.
     let mut build = try!(MapBuilder::new(wtr));
 
-    let index_file_name = "./index/shard.".to_string() + &iid.to_string();
     // remove previous index first if exists
-    fs::remove_file(&index_file_name);
+    fs::remove_file(out_shard_name);
     let index_file = &OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .open(&index_file_name).unwrap();
+        .open(out_shard_name).unwrap();
 
     let mut cursor: u64 = 0;
     for (key, qids) in vinvert.into_iter() {
@@ -156,7 +224,7 @@ pub fn build_shard(
         if qids_len > bk_size as u64 {
             panic!("Error bucket for {:?} is has more than {:?} elements", key, bk_size);
         }
-        let ids = qids.iter().map(|qid| (qid.id, qid.sc)).collect::<Vec<(u32, u8)>>();
+        let ids = qids.iter().map(|qid| (qid.id, qid.reminder, qid.sc)).collect::<Vec<(u32, u8, u8)>>();
         write_bucket(index_file, cursor*id_size as u64, &ids, id_size);
         build.insert(key, util::elegant_pair(cursor, qids_len)).unwrap();
 
@@ -166,6 +234,6 @@ pub fn build_shard(
     // Finish construction of the map and flush its contents to disk.
     try!(build.finish());
 
-    println!("file {} created", index_file_name);
+    println!("Shard {} created", out_shard_name);
     Ok(())
 }
