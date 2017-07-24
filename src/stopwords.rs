@@ -8,7 +8,7 @@ pub fn load(path: &str) -> Result<HashSet<String>, Error> {
     let mut stopwords = HashSet::new();
 
     let f = try!(File::open(path));
-    let mut file = BufReader::new(&f);
+    let file = BufReader::new(&f);
 
     for line in file.lines() {
         let sw = line.unwrap();

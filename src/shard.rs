@@ -5,7 +5,6 @@ use std::io::prelude::*;
 use fst::Map;
 
 use std::fs::OpenOptions;
-use std::io::prelude::*;
 
 use util;
 use config;
@@ -16,21 +15,21 @@ pub fn shard(file_path: &str, nr_shards: usize, output_dir: &str) -> Result<(), 
     println!("Sharding...");
 
     let f = try!(File::open(file_path));
-    let mut reader = BufReader::with_capacity(5 * 1024 * 1024, &f);
+    let reader = BufReader::with_capacity(5 * 1024 * 1024, &f);
 
     let mut qcount: u64 = 0;
 
     let mut shards = vec![];
     for i in 0..nr_shards {
         let file_path = format!("{}/queries.{}", output_dir, i);
-        let mut file =
+        let file =
             OpenOptions::new()
             .create(true)
             .append(true)
             .open(file_path)
             .unwrap();
 
-        let mut f = BufWriter::new(file);
+        let f = BufWriter::new(file);
         shards.push(f);
     }
 
@@ -55,7 +54,7 @@ pub fn shard(file_path: &str, nr_shards: usize, output_dir: &str) -> Result<(), 
             }
         };
 
-        let mut v: Vec<&str> = line.split(":").map(|t| t.trim()).collect();
+        let v: Vec<&str> = line.split(":").map(|t| t.trim()).collect();
 
         let qid = v[0].parse::<u64>().unwrap();
         let ref query = match v.len() {

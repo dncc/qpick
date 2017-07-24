@@ -2,7 +2,6 @@ extern crate fst;
 extern crate byteorder;
 extern crate serde_json;
 
-use std::thread;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -55,13 +54,18 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8)> {
     file.seek(SeekFrom::Start(addr)).unwrap();
     let mut handle = file.take((bk_size * id_size) as u64);
     let mut buf=vec![0u8; bk_size*id_size];
-    handle.read(&mut buf);
 
     let vlen = len as usize;
     let mut vector = Vec::<(u32, u8, u8)>::with_capacity(vlen);
-    for i in 0..vlen {
-        let j = i*id_size;
-        vector.push((LittleEndian::read_u32(&buf[j..j+4]), buf[j+4], buf[j+5]));
+
+    // failure to read returns 0
+    let n = handle.read(&mut buf).unwrap_or(0);
+
+    if n > 0 {
+        for i in 0..vlen {
+            let j = i*id_size;
+            vector.push((LittleEndian::read_u32(&buf[j..j+4]), buf[j+4], buf[j+5]));
+        }
     }
 
     vector
@@ -69,7 +73,7 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8)> {
 
 // reading part
 #[inline]
-fn get_addr_and_len(ngram: &str, pid: usize, map: &fst::Map) -> Option<(u64, u64)> {
+fn get_addr_and_len(ngram: &str, map: &fst::Map) -> Option<(u64, u64)> {
     match map.get(ngram) {
         Some(val) => {
             return Some(util::elegant_pair_inv(val))
@@ -78,8 +82,7 @@ fn get_addr_and_len(ngram: &str, pid: usize, map: &fst::Map) -> Option<(u64, u64
     }
 }
 
-fn get_shard_ids(pid: usize,
-                 ngrams: &HashMap<String, f32>,
+fn get_shard_ids(ngrams: &HashMap<String, f32>,
                  map: &fst::Map,
                  ifd: &File,
                  count: usize) -> Result<Vec<(u64, f32)>, Error>{
@@ -89,7 +92,7 @@ fn get_shard_ids(pid: usize,
     let n = *get_shard_size() as f32;
     for (ngram, ntr) in ngrams {
 
-        match get_addr_and_len(ngram, pid, &map) {
+        match get_addr_and_len(ngram, &map) {
             Some((addr, len)) => {
                 for pqid_rem_tr in read_bucket(&ifd, addr*id_size as u64, len).iter() {
 
@@ -140,7 +143,7 @@ pub struct QpickResults {
 }
 
 impl QpickResults {
-    pub fn new(mut items_iter: std::vec::IntoIter<(u64, f32)>) -> QpickResults {
+    pub fn new(items_iter: std::vec::IntoIter<(u64, f32)>) -> QpickResults {
         QpickResults { items_iter: items_iter }
     }
 
@@ -243,14 +246,13 @@ impl Qpick {
 
                 scoped.execute(move || {
 
-                    let sh_ids = match get_shard_ids(j as usize,
-                                                     &sh_ngrams,
+                    let sh_ids = match get_shard_ids(&sh_ngrams,
                                                      &shards[j].map,
                                                      &shards[j].shard,
                                                      shard_count) {
                         Ok(ids) => ids,
                         Err(_) => {
-                            println!("Failed to retrive ids from shard: {}", j);
+                            println!("Failed to retrive ids from shard: {}", &shards[j].id);
                             vec![]
                         }
                     };
@@ -295,7 +297,7 @@ impl Qpick {
     }
 
     pub fn get(&self, query: &str, count: u32) -> QpickResults {
-        let mut ids = self.get_ids(query.to_string(), Some(count as usize)).unwrap();
+        let ids = self.get_ids(query.to_string(), Some(count as usize)).unwrap();
         QpickResults::new(ids.into_iter())
     }
 
@@ -320,4 +322,5 @@ impl Qpick {
     }
 }
 
+#[allow(dead_code)]
 fn main() {}

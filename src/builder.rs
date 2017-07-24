@@ -1,23 +1,20 @@
 extern crate fst;
 
 use std::fs;
-use fst::{Map, MapBuilder, Error};
+use fst::{MapBuilder, Error};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::cmp::{Ordering, PartialOrd};
 use std::io::BufWriter;
 use std::fs::OpenOptions;
-use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
+use byteorder::{LittleEndian, WriteBytesExt};
 use std::io::SeekFrom;
-use std::collections::HashSet;
 use std::io::prelude::*;
-use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
 use util;
-use ngrams;
 use config;
 
 use std::collections::BinaryHeap;
@@ -52,7 +49,7 @@ fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: 
         w.write_u8(n.1).unwrap();
         w.write_u8(n.2).unwrap();
     };
-    file.write_all(w.as_slice());
+    file.write_all(w.as_slice()).unwrap();
 }
 
 pub fn index(input_dir: &str,
@@ -70,11 +67,9 @@ pub fn index(input_dir: &str,
 
     for i in first_shard..last_shard {
         let sender = sender.clone();
-        let out_dir = output_dir.clone();
 
         let id_size = c.id_size.clone();
         let bucket_size = c.bucket_size.clone();
-        let nr_shards = c.nr_shards.clone();
 
         let input_file_name = format!("{}/{}.{}", input_dir, shard_name, i);
         let out_shard_name = format!("{}/{}.{}", output_dir, "shard", i);
@@ -82,7 +77,7 @@ pub fn index(input_dir: &str,
 
         thread::spawn(move || {
             build_shard(i as u32, &input_file_name, id_size, bucket_size,
-                        nr_shards, &out_shard_name, &out_map_name);
+                        &out_shard_name, &out_map_name).unwrap();
 
             sender.send(()).unwrap();
         });
@@ -104,7 +99,6 @@ pub fn build_shard(
     input_file: &str,
     id_size: usize,
     bk_size: usize,
-    nr_shards: usize,
     out_shard_name: &str,
     out_map_name: &str) -> Result<(), Error>{
 
@@ -112,7 +106,7 @@ pub fn build_shard(
     let mut invert: HashMap<String, BinaryHeap<Qid>> = HashMap::new();
 
     let f = try!(File::open(input_file));
-    let mut reader = BufReader::with_capacity(5 * 1024 * 1024, &f);
+    let reader = BufReader::with_capacity(5 * 1024 * 1024, &f);
     for line in reader.lines() {
 
         let line = match line {
@@ -203,15 +197,15 @@ pub fn build_shard(
     vinvert.sort_by(|a, b| {a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal)});
 
     // remove previous index first if exists
-    fs::remove_file(out_map_name);
-    let mut wtr = BufWriter::new(try!(File::create(out_map_name)));
+    try!(fs::remove_file(out_map_name));
+    let wtr = BufWriter::new(try!(File::create(out_map_name)));
 
     println!("Map {} init...", out_map_name);
     // Create a builder that can be used to insert new key-value pairs.
     let mut build = try!(MapBuilder::new(wtr));
 
     // remove previous index first if exists
-    fs::remove_file(out_shard_name);
+    try!(fs::remove_file(out_shard_name));
     let index_file = &OpenOptions::new()
         .read(true)
         .write(true)

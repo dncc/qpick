@@ -19,7 +19,7 @@ fn npid2key(ngramv: & mut Vec<u8>, pid: usize) -> String {
 #[inline]
 fn key2npid(key: &str) -> (String, usize) {
 
-    let mut split = key.split(SEPARATOR);
+    let split = key.split(SEPARATOR);
     let v = split.collect::<Vec<&str>>();
 
     assert_eq!(v.len(), 2);

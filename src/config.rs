@@ -1,6 +1,5 @@
 extern crate serde_json;
 
-use std;
 use std::io::Error;
 use std::io::Read;
 use std::io::BufReader;
@@ -22,7 +21,7 @@ impl Config {
         let f = try!(File::open("/home/dnc/workspace/cliqz/qpick/config.json"));
         let mut buf = BufReader::new(&f);
         let mut config = String::new();
-        buf.read_to_string(&mut config);
+        buf.read_to_string(&mut config).unwrap();
 
         Ok(config)
     }
