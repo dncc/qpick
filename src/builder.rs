@@ -226,7 +226,8 @@ pub fn build_shard(
         }
         let ids = qids.iter().map(|qid| (qid.id, qid.reminder, qid.sc)).collect::<Vec<(u32, u8, u8)>>();
         write_bucket(index_file, cursor*id_size as u64, &ids, id_size);
-        build.insert(key, util::elegant_pair(cursor, qids_len)).unwrap();
+        let val = util::elegant_pair(cursor, qids_len).unwrap();
+        build.insert(key, val).unwrap();
 
         cursor += qids_len;
     }

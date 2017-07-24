@@ -4,6 +4,9 @@ use std::io::{Write, BufWriter, BufReader};
 use std::io::prelude::*;
 use fst::Map;
 
+use std::fs::OpenOptions;
+use std::io::prelude::*;
+
 use util;
 use config;
 use stopwords;
@@ -15,13 +18,19 @@ pub fn shard(file_path: &str, nr_shards: usize, output_dir: &str) -> Result<(), 
     let f = try!(File::open(file_path));
     let mut reader = BufReader::with_capacity(5 * 1024 * 1024, &f);
 
-    let mut qid: u64 = 0;
+    let mut qcount: u64 = 0;
 
     let mut shards = vec![];
     for i in 0..nr_shards {
         let file_path = format!("{}/queries.{}", output_dir, i);
-        let f = File::create(file_path).expect("Unable to create file");
-        let mut f = BufWriter::new(f);
+        let mut file =
+            OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file_path)
+            .unwrap();
+
+        let mut f = BufWriter::new(file);
         shards.push(f);
     }
 
@@ -48,9 +57,10 @@ pub fn shard(file_path: &str, nr_shards: usize, output_dir: &str) -> Result<(), 
 
         let mut v: Vec<&str> = line.split(":").map(|t| t.trim()).collect();
 
+        let qid = v[0].parse::<u64>().unwrap();
         let ref query = match v.len() {
-            2 => v[1].to_string(),
-            _ => v[1..v.len()-1].join(" "),
+            3 => v[2].to_string(),
+            _ => v[2..v.len()-1].join(" "),
         };
 
         for (ngram, sc) in &ngrams::parse(query, 2, stopwords, tr_map, ngrams::ParseMode::Indexing) {
@@ -69,9 +79,9 @@ pub fn shard(file_path: &str, nr_shards: usize, output_dir: &str) -> Result<(), 
 
         }
 
-        qid += 1;
-        if qid as u64 % 1_000_000 == 0 {
-            println!("Reading {:.1}M", qid / 1_000_000);
+        qcount += 1;
+        if qcount as u64 % 1_000_000 == 0 {
+            println!("Reading {:.1}M", qcount / 1_000_000);
         }
     }
 

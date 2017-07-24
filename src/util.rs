@@ -1,4 +1,37 @@
+use std::error;
+use std::fmt;
 use std::cmp::PartialOrd;
+
+/// An error that occurred while computing elegant pair.
+#[derive(Debug)]
+pub enum ElegantPairError {
+    /// The numbers given when paired exceed u64
+    NumbersTooBig(u64, u64),
+}
+
+impl fmt::Display for ElegantPairError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    use self::ElegantPairError::*;
+    match *self {
+        NumbersTooBig(x, y) => {
+        write!(f, "{} and {} give a pair number bigger than 2^64", x, y)
+    }}}
+}
+
+impl error::Error for ElegantPairError {
+    fn description(&self) -> &str {
+        use self::ElegantPairError::*;
+        match *self {
+            NumbersTooBig(_, _) => "Numbers are too big to be paired",
+        }
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        None
+    }
+}
+
+pub type Result<T> = ::std::result::Result<T, ElegantPairError>;
 
 static KEY_SEPARATOR: &'static str = ":";
 
@@ -32,16 +65,17 @@ pub fn key2ngram(key: String) -> (String, u32) {
     TODO implement with bignum, otherwise might overflow!
  */
 #[inline]
-pub fn elegant_pair(x: u64, y: u64) -> u64 {
+pub fn elegant_pair(x: u64, y: u64) -> Result<u64> {
     let z: u64 = match x >= y {
         true => x * x + x + y,
         false => y * y + x,
     };
-    if elegant_pair_inv(z) != (x, y) {
-        panic!("Numbers {} and {} cannot be paired!", x, y);
-    };
 
-    z
+    if elegant_pair_inv(z) != (x, y) {
+        return Err(ElegantPairError::NumbersTooBig(x, y).into());
+    }
+
+    Ok(z)
 }
 
 /*
