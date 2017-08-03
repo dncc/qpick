@@ -257,8 +257,12 @@ impl Qpick {
                         }
                     };
 
-                    // obtaining lock might fail! handle it!
-                    let mut _ids = _ids.lock().unwrap();
+                    // obtaining lock might fail, handle it
+                    let mut _ids = match _ids.lock() {
+                        Ok(_ids) => _ids,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+
                     for (qid, qsc) in sh_ids {
                         // qid is u64, qsc is f32
                         let sc = _ids.entry(qid).or_insert(0.0);
