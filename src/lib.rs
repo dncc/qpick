@@ -210,10 +210,7 @@ impl Qpick {
         }
 
         let shard_count = match count {
-           Some( 1...10) => 30,
-           Some(10...20) => 50,
-           Some(20...30) => 70,
-           Some(30...50) => 90,
+           Some(1...50) => 100,
                  _ => count.unwrap(),
         };
 

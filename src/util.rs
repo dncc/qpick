@@ -2,6 +2,8 @@ use std::error;
 use std::fmt;
 use std::cmp::PartialOrd;
 
+extern crate seahash;
+
 /// An error that occurred while computing elegant pair.
 #[derive(Debug)]
 pub enum ElegantPairError {
@@ -103,9 +105,6 @@ pub fn max<T:PartialOrd>(a:T, b:T) -> T {
     }
 }
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
 // A Fast, Minimal Memory, Consistent Hash Algorithm by John Lamping and Eric Veach:
 // https://arxiv.org/pdf/1406.2294.pdf
 // It outputs a bucket number in the range [0, num_buckets).
@@ -128,11 +127,7 @@ pub fn jump_consistent_hash(mut key: u64, num_buckets: u32) -> u32 {
 
 #[inline]
 pub fn jump_consistent_hash_str(key: &str, num_buckets: u32) -> u32 { //
-
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-
-    jump_consistent_hash(hasher.finish(), num_buckets)
+    jump_consistent_hash(seahash::hash(key.as_bytes()), num_buckets)
 }
 
 #[cfg(test)]
@@ -141,7 +136,7 @@ mod tests {
 
     #[test]
     fn jump_consistent_hash_str_test() {
-        assert_eq!(16, jump_consistent_hash_str("how to put on thai fishing pants", 32));
+        assert_eq!(3, jump_consistent_hash_str("how to put on thai fishing pants", 32));
     }
 
     #[test]
