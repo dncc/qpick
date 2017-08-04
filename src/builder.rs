@@ -92,6 +92,15 @@ pub fn index(input_dir: &str,
     Ok(())
 }
 
+macro_rules! remove_file_if_exists {
+    ($fn_name:ident) => (
+        match fs::remove_file($fn_name) {
+            Err(err) => println!("Failed to delete previous {}, err: {:?}", $fn_name, err),
+            Ok(_) => println!("Deleted previous file {}", $fn_name),
+        };
+    )
+}
+
 // build inverted query index, ngram_i -> [q1, q2, ... qi]
 pub fn build_shard(
 
@@ -197,7 +206,8 @@ pub fn build_shard(
     vinvert.sort_by(|a, b| {a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal)});
 
     // remove previous index first if exists
-    try!(fs::remove_file(out_map_name));
+
+    remove_file_if_exists!(out_map_name);
     let wtr = BufWriter::new(try!(File::create(out_map_name)));
 
     println!("Map {} init...", out_map_name);
@@ -205,7 +215,7 @@ pub fn build_shard(
     let mut build = try!(MapBuilder::new(wtr));
 
     // remove previous index first if exists
-    try!(fs::remove_file(out_shard_name));
+    remove_file_if_exists!(out_shard_name);
     let index_file = &OpenOptions::new()
         .read(true)
         .write(true)
