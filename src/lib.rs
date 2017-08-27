@@ -155,7 +155,7 @@ impl QpickResults {
 impl Qpick {
     fn new(path: String) -> Qpick {
 
-        let c = config::Config::init();
+        let c = config::Config::init(path.clone());
 
         unsafe {
             // TODO set up globals, later should be available via self.config
@@ -217,8 +217,7 @@ impl Qpick {
         let mut _ids: Arc<Mutex<HashMap<u64, f32>>> = Arc::new(Mutex::new(HashMap::new()));
         let (sender, receiver) = mpsc::channel();
 
-        let ref ngrams: HashMap<String, f32> = ngrams::parse(
-            &query, 2, &self.stopwords, &self.terms_relevance, ngrams::ParseMode::Searching);
+        let ref ngrams: HashMap<String, f32> = ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
         let ref mut shards_ngrams: HashMap<usize, HashMap<String, f32>> = HashMap::new();
 

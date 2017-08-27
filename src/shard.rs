@@ -33,7 +33,7 @@ pub fn shard(file_path: &str, nr_shards: usize, output_dir: &str) -> Result<(), 
         shards.push(f);
     }
 
-    let c = config::Config::init();
+    let c = config::Config::init(output_dir.to_string());
 
     let ref stopwords = match stopwords::load(&c.stopwords_path) {
         Ok(stopwords) => stopwords,
@@ -62,7 +62,7 @@ pub fn shard(file_path: &str, nr_shards: usize, output_dir: &str) -> Result<(), 
             _ => v[2..v.len()-1].join(" "),
         };
 
-        for (ngram, sc) in &ngrams::parse(query, 2, stopwords, tr_map, ngrams::ParseMode::Indexing) {
+        for (ngram, sc) in &ngrams::parse(query, stopwords, tr_map) {
 
             let shard_id = util::jump_consistent_hash_str(ngram, nr_shards as u32);
 

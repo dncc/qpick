@@ -58,7 +58,7 @@ pub fn index(input_dir: &str,
              last_shard: usize,
              output_dir: &str) -> Result<(), Error> {
 
-    let c = config::Config::init();
+    let c = config::Config::init(output_dir.to_string());
 
     // create index dir if it doesn't exist
     try!(fs::create_dir_all(output_dir));

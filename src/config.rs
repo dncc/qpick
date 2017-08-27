@@ -1,5 +1,4 @@
 extern crate serde_json;
-
 use std::io::Error;
 use std::io::Read;
 use std::io::BufReader;
@@ -17,8 +16,8 @@ pub struct Config {
 
 impl Config {
 
-    fn load_config_file() -> Result<String, Error> {
-        let f = try!(File::open("/home/dnc/workspace/cliqz/qpick/config.json"));
+    fn load_config_file(path: String) -> Result<String, Error> {
+        let f = try!(File::open(format!("{}/config.json", path)));
         let mut buf = BufReader::new(&f);
         let mut config = String::new();
         buf.read_to_string(&mut config).unwrap();
@@ -26,8 +25,8 @@ impl Config {
         Ok(config)
     }
 
-    pub fn init() -> Self {
-        let config_content = Config::load_config_file().unwrap();
+    pub fn init(path: String) -> Self {
+        let config_content = Config::load_config_file(path).unwrap();
         let config: Value = serde_json::from_str(&config_content).unwrap();
 
         let nr_shards = match config["nr_shards"] {

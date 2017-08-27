@@ -3,12 +3,12 @@ use fst::Map;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-fn get_terms_relevance(terms: &Vec<&str>, tr_map: &fst::Map) -> HashMap<String, f32> {
+fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String, f32> {
 
     let mut missing: HashSet<String> = HashSet::new();
     let mut terms_rel: HashMap<String, f32> = HashMap::new();
 
-    let tset = terms.clone().into_iter().collect::<HashSet<&str>>();
+    let tset = terms.clone().into_iter().collect::<HashSet<String>>();
     for t in &tset {
         match tr_map.get(t) {
             Some(tr) => {
@@ -25,7 +25,7 @@ fn get_terms_relevance(terms: &Vec<&str>, tr_map: &fst::Map) -> HashMap<String, 
     let mut avg: f32 = sum/terms_rel.len() as f32;
     // terms may repeat in the query or/and sum might be zero
     if sum > 0.0 {
-        sum = terms.iter().fold(0.0, |a, t| a + terms_rel.get(t.clone()).unwrap_or(&avg));
+        sum = terms.iter().fold(0.0, |a, t| a + terms_rel.get(&t.clone()).unwrap_or(&avg));
         avg = sum/terms.len() as f32;
     } else {
         avg = 1.0;
@@ -41,80 +41,69 @@ fn get_terms_relevance(terms: &Vec<&str>, tr_map: &fst::Map) -> HashMap<String, 
     terms_rel
 }
 
-pub enum ParseMode {
-   Searching,
-   Indexing
+macro_rules! bow_ngrams {
+    ($wv:ident, $ngrams: ident) => (
+    if $wv.len() > 0 {
+        let mut v: Vec<String>;
+        for i in 0..$wv.len()-1 {
+            v = vec![$wv[i].0.clone(), $wv[i+1].0.clone()];
+            v.sort();
+            $ngrams.insert(format!("{} {}", v[0], v[1]), $wv[i].1+$wv[i+1].1);
+
+            if i < $wv.len()-2 {
+                v = vec![$wv[i].0.clone(), $wv[i+2].0.clone()];
+                v.sort();
+                $ngrams.insert(format!("{} {}", v[0], v[1]), $wv[i].1+$wv[i+2].1);
+            }
+        }
+    })
 }
 
-pub fn parse(query: &str, length: usize, stopwords: &HashSet<String>, tr_map: &Map, mode: ParseMode)
+pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map)
                 -> HashMap<String, f32> {
 
     let mut ngrams: HashMap<String, f32> = HashMap::new();
 
-    let mut wvec = query.split(" ").collect::<Vec<&str>>();
+    let wvec = query.split(" ").map(|w| w.to_string().to_lowercase()).collect::<Vec<String>>();
     let terms_rel = get_terms_relevance(&wvec, tr_map);
 
-    wvec.reverse();
-
-    // concatenate terms with stopwords if any
-    let mut termv = vec![];
-    let mut terms: Vec<(String, f32)> = vec![]; // [('the best', 0.2), ('search', 0.3)]
+    let mut tempv = vec![];
+    // concatenate terms with stopwords
+    let mut w_stop: Vec<(String, f32)> = vec![]; // [('the best', 0.2), ('search', 0.3)]
+    // concatenate terms without stopwords
+    let mut wo_stop: Vec<(String, f32)> = vec![]; // [('best', 0.15), ('search', 0.3)]
     let mut has_stopword = false;
-    while wvec.len() > 0 {
-        let w = wvec.pop().unwrap();
-        termv.push(w);
-        if stopwords.contains(w) {
+
+    for i in 0..wvec.len() {
+        let w = wvec[i].clone();
+
+        if stopwords.contains(&w) {
             has_stopword = true;
+            tempv.push(w.clone());
+            continue
+        }
 
-        } else if termv.len() >= length {
-            if has_stopword {
-                let r = termv.iter().fold(0.0, |a, t| a + terms_rel.get(t.clone()).unwrap());
-                let s: String = termv.into_iter().collect::<Vec<_>>().join(" ");
-                terms.push((s, r));
-            } else {
-                for t in termv.into_iter() {
-                    terms.push((t.to_string(), *terms_rel.get(t).unwrap()));
-                }
-            }
+        // since we are here the last word is not a stop-word, insert as a unigram
+        ngrams.insert(format!("{}", w.clone()), *terms_rel.get(&w).unwrap());
+
+        if has_stopword {
+            tempv.push(w.clone());
+            let r = tempv.iter().fold(0.0, |a, t| a + terms_rel.get(&t.clone()).unwrap());
+            let s: String = tempv.into_iter().collect::<Vec<_>>().join(" ");
+            w_stop.push((s, r));
+            wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
+
             has_stopword = false;
-            termv = vec![];
+            tempv = vec![];
+        } else {
+            w_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
+            wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
         }
     }
 
-    if termv.len() > 0 {
-        for t in termv.into_iter() {
-            terms.push((t.to_string(), *terms_rel.get(t).unwrap()));
-        }
-    }
-
-    // generate ngrams as combination of terms a b c d -> ab, ac, bc, bd, cd and in the search mode: ba ca cb db dc
-    if terms.len() > 0 {
-        for i in 0..terms.len()-1 {
-            ngrams.insert(format!("{}", terms[i].0), terms[i].1);
-            match mode {
-                ParseMode::Indexing => {
-                    ngrams.insert(format!("{} {}", terms[i].0, terms[i+1].0), terms[i].1+terms[i+1].1);
-                },
-                ParseMode::Searching => {
-                    ngrams.insert(format!("{} {}", terms[i].0, terms[i+1].0), terms[i].1+terms[i+1].1);
-                    ngrams.insert(format!("{} {}", terms[i+1].0, terms[i].0), 0.85*(terms[i].1+terms[i+1].1));
-                },
-            };
-
-            if i < terms.len()-2 {
-                match mode {
-                    ParseMode::Indexing => {
-                        ngrams.insert(format!("{} {}", terms[i].0, terms[i+2].0), terms[i].1+terms[i+2].1);
-                    },
-                    ParseMode::Searching => {
-                        ngrams.insert(format!("{} {}", terms[i].0, terms[i+2].0), terms[i].1+terms[i+2].1);
-                        ngrams.insert(format!("{} {}", terms[i+2].0, terms[i].0), 0.75*(terms[i].1+terms[i+2].1));
-                    },
-                };
-            }
-        }
-        ngrams.insert(format!("{}", terms[terms.len()-1].0), terms[terms.len()-1].1);
-    }
+    // generate ngrams as bag of words combination of terms c a b d -> ac, bc, ab, ad, bd
+    bow_ngrams!(w_stop, ngrams);
+    bow_ngrams!(wo_stop, ngrams);
 
     return ngrams
 }
