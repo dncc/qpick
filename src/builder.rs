@@ -21,9 +21,9 @@ use std::collections::BinaryHeap;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Qid {
-    id: u32,        // query id: is equal to globally_unique_u64_query_id << log(nr_shards), unique on shard level
-    reminder: u8,   // reminder: from globally_unique_u64_query_id % number_of_shards
-    sc: u8,         // score: ngram relevance/score for the query
+    id: u32, // query id: is equal to globally_unique_u64_query_id << log(nr_shards), unique on shard level
+    reminder: u8, // reminder: from globally_unique_u64_query_id % number_of_shards
+    sc: u8, // score: ngram relevance/score for the query
 }
 
 // The priority queue depends on `Ord`.
@@ -43,12 +43,12 @@ impl PartialOrd for Qid {
 
 fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: usize) {
     file.seek(SeekFrom::Start(addr)).unwrap();
-    let mut w = Vec::with_capacity(data.len()*id_size);
+    let mut w = Vec::with_capacity(data.len() * id_size);
     for n in data.iter() {
         w.write_u32::<LittleEndian>(n.0).unwrap();
         w.write_u8(n.1).unwrap();
         w.write_u8(n.2).unwrap();
-    };
+    }
     file.write_all(w.as_slice()).unwrap();
 }
 
@@ -56,7 +56,8 @@ pub fn index(input_dir: &str,
              shard_name: &str,
              first_shard: usize,
              last_shard: usize,
-             output_dir: &str) -> Result<(), Error> {
+             output_dir: &str)
+             -> Result<(), Error> {
 
     let c = config::Config::init(output_dir.to_string());
 
@@ -76,8 +77,13 @@ pub fn index(input_dir: &str,
         let out_map_name = format!("{}/{}.{}", output_dir, "map", i);
 
         thread::spawn(move || {
-            build_shard(i as u32, &input_file_name, id_size, bucket_size,
-                        &out_shard_name, &out_map_name).unwrap();
+            build_shard(i as u32,
+                        &input_file_name,
+                        id_size,
+                        bucket_size,
+                        &out_shard_name,
+                        &out_map_name)
+                    .unwrap();
 
             sender.send(()).unwrap();
         });
@@ -102,14 +108,13 @@ macro_rules! remove_file_if_exists {
 }
 
 // build inverted query index, ngram_i -> [q1, q2, ... qi]
-pub fn build_shard(
-
-    iid: u32,
-    input_file: &str,
-    id_size: usize,
-    bk_size: usize,
-    out_shard_name: &str,
-    out_map_name: &str) -> Result<(), Error>{
+pub fn build_shard(iid: u32,
+                   input_file: &str,
+                   id_size: usize,
+                   bk_size: usize,
+                   out_shard_name: &str,
+                   out_map_name: &str)
+                   -> Result<(), Error> {
 
     let mut qcount: u64 = 0;
     let mut invert: HashMap<String, BinaryHeap<Qid>> = HashMap::new();
@@ -122,69 +127,91 @@ pub fn build_shard(
             Ok(line) => line,
             Err(e) => {
                 println!("Read line error: {:?}", e);
-                continue
+                continue;
             }
         };
 
         let mut split = line.trim().split("\t");
 
         let pqid = match split.next() {
-            Some(pqid) => match pqid.parse::<u32>() {
-                Ok(n) => n,
-                Err(err) => {
-                    println!("Shard {:?} - failed to parse query id {:?}: {:?}", iid, pqid, err);
-                    continue
+            Some(pqid) => {
+                match pqid.parse::<u32>() {
+                    Ok(n) => n,
+                    Err(err) => {
+                        println!("Shard {:?} - failed to parse query id {:?}: {:?}",
+                                 iid,
+                                 pqid,
+                                 err);
+                        continue;
+                    }
                 }
-            },
+            }
             None => {
                 println!("Shard {:?} - No query id found", iid);
-                continue
+                continue;
             }
         };
 
         let reminder = match split.next() {
-            Some(r) => match r.parse::<u8>() {
-                Ok(n) => n,
-                Err(err) => {
-                    println!("Shard {:?} - failed to parse query id {:?}: {:?}", iid, pqid, err);
-                    continue
+            Some(r) => {
+                match r.parse::<u8>() {
+                    Ok(n) => n,
+                    Err(err) => {
+                        println!("Shard {:?} - failed to parse query id {:?}: {:?}",
+                                 iid,
+                                 pqid,
+                                 err);
+                        continue;
+                    }
                 }
-            },
+            }
             None => {
                 println!("Shard {:?} - No query id found", iid);
-                continue
+                continue;
             }
         };
 
         let ngram = match split.next() {
-                Some(ng) => ng.trim(),
-                None => {
-                        println!("Shard {:?} - No ngram found", iid);
-                        continue
-                }
-        };
-
-        let nsc = match split.next() {
-            Some(nsc) => match nsc.parse::<u8>() {
-                Ok(n) => n,
-                Err(err) => {
-                    println!("Shard {:?} - failed to parse ngram score {:?}: {:?}", iid, nsc, err);
-                    continue
-                }
-            },
+            Some(ng) => ng.trim(),
             None => {
-                println!("Shard {:?} - No query score found", iid);
-                continue
+                println!("Shard {:?} - No ngram found", iid);
+                continue;
             }
         };
 
-        let imap = invert.entry(ngram.to_string()).or_insert(BinaryHeap::new());
+        let nsc = match split.next() {
+            Some(nsc) => {
+                match nsc.parse::<u8>() {
+                    Ok(n) => n,
+                    Err(err) => {
+                        println!("Shard {:?} - failed to parse ngram score {:?}: {:?}",
+                                 iid,
+                                 nsc,
+                                 err);
+                        continue;
+                    }
+                }
+            }
+            None => {
+                println!("Shard {:?} - No query score found", iid);
+                continue;
+            }
+        };
 
-        let qid_obj = Qid{ id: pqid, reminder: reminder, sc: nsc};
+        let imap = invert
+            .entry(ngram.to_string())
+            .or_insert(BinaryHeap::new());
+
+        let qid_obj = Qid {
+            id: pqid,
+            reminder: reminder,
+            sc: nsc,
+        };
 
         if imap.len() >= bk_size {
             let mut mqid = imap.peek_mut().unwrap();
-            if qid_obj < *mqid { //in fact qid.sc > mqid.sc, due to the flipped ordering
+            if qid_obj < *mqid {
+                //in fact qid.sc > mqid.sc, due to the flipped ordering
                 *mqid = qid_obj
             }
         } else {
@@ -198,12 +225,13 @@ pub fn build_shard(
     }
 
     // sort inverted query index by keys (ngrams) and store it to fst file
-    let mut vinvert: Vec<(String, BinaryHeap<Qid>)> = invert.into_iter()
+    let mut vinvert: Vec<(String, BinaryHeap<Qid>)> = invert
+        .into_iter()
         .map(|(key, qids)| (key, qids))
         .collect();
 
-    println!("Sorting {:.1}M keys...", vinvert.len()/1_000_000);
-    vinvert.sort_by(|a, b| {a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal)});
+    println!("Sorting {:.1}M keys...", vinvert.len() / 1_000_000);
+    vinvert.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
 
     // remove previous index first if exists
 
@@ -217,19 +245,24 @@ pub fn build_shard(
     // remove previous index first if exists
     remove_file_if_exists!(out_shard_name);
     let index_file = &OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(out_shard_name).unwrap();
+                          .read(true)
+                          .write(true)
+                          .create(true)
+                          .open(out_shard_name)
+                          .unwrap();
 
     let mut cursor: u64 = 0;
     for (key, qids) in vinvert.into_iter() {
         let qids_len: u64 = qids.len() as u64;
         if qids_len > bk_size as u64 {
-            panic!("Error bucket for {:?} is has more than {:?} elements", key, bk_size);
+            panic!("Error bucket for {:?} is has more than {:?} elements",
+                   key,
+                   bk_size);
         }
-        let ids = qids.iter().map(|qid| (qid.id, qid.reminder, qid.sc)).collect::<Vec<(u32, u8, u8)>>();
-        write_bucket(index_file, cursor*id_size as u64, &ids, id_size);
+        let ids = qids.iter()
+            .map(|qid| (qid.id, qid.reminder, qid.sc))
+            .collect::<Vec<(u32, u8, u8)>>();
+        write_bucket(index_file, cursor * id_size as u64, &ids, id_size);
         let val = util::elegant_pair(cursor, qids_len).unwrap();
         build.insert(key, val).unwrap();
 

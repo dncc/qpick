@@ -19,13 +19,13 @@ Options:
 struct Args {
     arg_path: String,
     arg_nr_shards: usize,
-    arg_output_dir: String
+    arg_output_dir: String,
 }
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
-let args: Args = Docopt::new(USAGE)
-    .and_then(|d| d.argv(&argv).decode())
-    .unwrap_or_else(|e| e.exit());
+    let args: Args = Docopt::new(USAGE)
+        .and_then(|d| d.argv(&argv).decode())
+        .unwrap_or_else(|e| e.exit());
 
     let r = qpick::Qpick::shard(args.arg_path, args.arg_nr_shards, args.arg_output_dir);
     println!("{:?}", r);

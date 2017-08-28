@@ -30,16 +30,15 @@ struct Args {
 }
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
-let args: Args = Docopt::new(USAGE)
-    .and_then(|d| d.argv(&argv).decode())
-    .unwrap_or_else(|e| e.exit());
+    let args: Args = Docopt::new(USAGE)
+        .and_then(|d| d.argv(&argv).decode())
+        .unwrap_or_else(|e| e.exit());
 
-    let r = qpick::Qpick::index(
-        args.arg_input_dir,
-        args.arg_shard_name,
-        args.arg_first_shard,
-        args.arg_last_shard,
-        args.arg_output_dir);
+    let r = qpick::Qpick::index(args.arg_input_dir,
+                                args.arg_shard_name,
+                                args.arg_first_shard,
+                                args.arg_last_shard,
+                                args.arg_output_dir);
 
     println!("{:?}", r);
 

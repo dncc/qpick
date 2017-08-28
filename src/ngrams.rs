@@ -13,20 +13,22 @@ fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String
         match tr_map.get(t) {
             Some(tr) => {
                 terms_rel.insert(t.to_string(), tr as f32);
-            },
+            }
             None => {
                 missing.insert(t.to_string()); // not used!
-            },
+            }
         };
     }
 
     // avg and sum
     let mut sum: f32 = terms_rel.values().fold(0.0, |a, b| a + *b);
-    let mut avg: f32 = sum/terms_rel.len() as f32;
+    let mut avg: f32 = sum / terms_rel.len() as f32;
     // terms may repeat in the query or/and sum might be zero
     if sum > 0.0 {
-        sum = terms.iter().fold(0.0, |a, t| a + terms_rel.get(&t.clone()).unwrap_or(&avg));
-        avg = sum/terms.len() as f32;
+        sum = terms
+            .iter()
+            .fold(0.0, |a, t| a + terms_rel.get(&t.clone()).unwrap_or(&avg));
+        avg = sum / terms.len() as f32;
     } else {
         avg = 1.0;
         sum = terms.len() as f32;
@@ -59,12 +61,14 @@ macro_rules! bow_ngrams {
     })
 }
 
-pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map)
-                -> HashMap<String, f32> {
+pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map) -> HashMap<String, f32> {
 
     let mut ngrams: HashMap<String, f32> = HashMap::new();
 
-    let wvec = query.split(" ").map(|w| w.to_string().to_lowercase()).collect::<Vec<String>>();
+    let wvec = query
+        .split(" ")
+        .map(|w| w.to_string().to_lowercase())
+        .collect::<Vec<String>>();
     let terms_rel = get_terms_relevance(&wvec, tr_map);
 
     let mut tempv = vec![];
@@ -80,7 +84,7 @@ pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map)
         if stopwords.contains(&w) {
             has_stopword = true;
             tempv.push(w.clone());
-            continue
+            continue;
         }
 
         // since we are here the last word is not a stop-word, insert as a unigram
@@ -88,7 +92,9 @@ pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map)
 
         if has_stopword {
             tempv.push(w.clone());
-            let r = tempv.iter().fold(0.0, |a, t| a + terms_rel.get(&t.clone()).unwrap());
+            let r = tempv
+                .iter()
+                .fold(0.0, |a, t| a + terms_rel.get(&t.clone()).unwrap());
             let s: String = tempv.into_iter().collect::<Vec<_>>().join(" ");
             w_stop.push((s, r));
             wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
@@ -105,5 +111,5 @@ pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map)
     bow_ngrams!(w_stop, ngrams);
     bow_ngrams!(wo_stop, ngrams);
 
-    return ngrams
+    return ngrams;
 }

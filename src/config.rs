@@ -6,16 +6,15 @@ use std::fs::File;
 use serde_json::Value;
 
 pub struct Config {
-    pub id_size: usize,     // query id size in bytes (4 for id + 1 for relevance)
+    pub id_size: usize, // query id size in bytes (4 for id + 1 for relevance)
     pub bucket_size: usize, // max number of query ids in a ngram bucket
     pub nr_shards: usize,
-    pub shard_size: usize,  // number of ids in the shard
+    pub shard_size: usize, // number of ids in the shard
     pub terms_relevance_path: String,
     pub stopwords_path: String,
 }
 
 impl Config {
-
     fn load_config_file(path: String) -> Result<String, Error> {
         let f = try!(File::open(format!("{}/config.json", path)));
         let mut buf = BufReader::new(&f);
@@ -31,7 +30,7 @@ impl Config {
 
         let nr_shards = match config["nr_shards"] {
             Value::Number(ref nr_shards) => nr_shards.as_u64().unwrap(),
-             _ => 32,
+            _ => 32,
         };
 
         let shard_size = match config["shard_size"] {
@@ -65,7 +64,7 @@ impl Config {
             nr_shards: nr_shards as usize,
             shard_size: shard_size as usize,
             terms_relevance_path: terms_relevance_path.to_string(),
-            stopwords_path: stopwords_path.to_string()
+            stopwords_path: stopwords_path.to_string(),
         }
     }
 }
