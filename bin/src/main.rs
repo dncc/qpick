@@ -14,17 +14,6 @@ use std::io::{self, Write};
 
 use docopt::Docopt;
 
-macro_rules! w {
-    ($wtr:expr, $($tt:tt)*) => {{
-        use std::io::Write;
-        let _ = writeln!(&mut $wtr, $($tt)*);
-    }}
-}
-
-macro_rules! fail {
-    ($($tt:tt)*) => { return Err(From::from(format!($($tt)*))); }
-}
-
 mod cmd;
 
 pub type Error = Box<error::Error + Send + Sync>;

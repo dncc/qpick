@@ -203,11 +203,7 @@ impl Qpick {
         Qpick::new(path)
     }
 
-    fn get_ids(&self, query: String, count: Option<usize>) -> Result<Vec<(u64, f32)>, Error> {
-
-        if query == "" || count == Some(0) || count == None {
-            return Ok(vec![])
-        }
+    fn get_ids(&self, ngrams: &HashMap<String, f32>, count: Option<usize>) -> Result<Vec<(u64, f32)>, Error> {
 
         let shard_count = match count {
            Some(1...50) => 100,
@@ -216,8 +212,6 @@ impl Qpick {
 
         let mut _ids: Arc<Mutex<HashMap<u64, f32>>> = Arc::new(Mutex::new(HashMap::new()));
         let (sender, receiver) = mpsc::channel();
-
-        let ref ngrams: HashMap<String, f32> = ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
         let ref mut shards_ngrams: HashMap<usize, HashMap<String, f32>> = HashMap::new();
 
@@ -288,7 +282,14 @@ impl Qpick {
 
     // TODO deprecated, to be removed
     pub fn search(&self, query: &str) -> String {
-        let ids = match self.get_ids(query.to_string(), Some(100)) {
+        if query == "" {
+            return "".to_string();
+        }
+
+        let ref ngrams: HashMap<String, f32> = ngrams::parse(
+            &query, &self.stopwords, &self.terms_relevance);
+
+        let ids = match self.get_ids(ngrams, Some(100)) {
             Ok(ids) => serde_json::to_string(&ids).unwrap(),
             Err(err) => err.to_string(),
         };
@@ -297,7 +298,30 @@ impl Qpick {
     }
 
     pub fn get(&self, query: &str, count: u32) -> QpickResults {
-        let ids = self.get_ids(query.to_string(), Some(count as usize)).unwrap();
+        if query == "" || count == 0 {
+            return QpickResults::new(vec![].into_iter())
+        }
+
+        let ref ngrams: HashMap<String, f32> = ngrams::parse(
+            &query, &self.stopwords, &self.terms_relevance);
+
+        let ids = self.get_ids(ngrams, Some(count as usize)).unwrap();
+        QpickResults::new(ids.into_iter())
+    }
+
+    pub fn nget(&self, queries: Vec<&str>, count: u32) -> QpickResults {
+        if queries.len() == 0 || count == 0 {
+            return QpickResults::new(vec![].into_iter())
+        }
+
+        let ref mut ngrams: HashMap<String, f32> = HashMap::new();
+        for query in queries {
+            for (ngram, sc) in ngrams::parse(&query, &self.stopwords, &self.terms_relevance){
+                ngrams.insert(ngram, sc);
+            }
+        }
+
+        let ids = self.get_ids(ngrams, Some(count as usize)).unwrap();
         QpickResults::new(ids.into_iter())
     }
 
