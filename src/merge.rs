@@ -1,11 +1,11 @@
 use std::fs::File;
 use std::io::BufWriter;
-use fst::{Error, raw, Streamer};
+use fst::{raw, Error, Streamer};
 
 static SEPARATOR: &'static str = "\u{0}\u{0}";
 
 #[inline]
-fn npid2key(ngramv: & mut Vec<u8>, pid: usize) -> String {
+fn npid2key(ngramv: &mut Vec<u8>, pid: usize) -> String {
     let n = String::from_utf8_lossy(&ngramv).into_owned();
     let k = format!("{}{}{}", n, SEPARATOR, pid);
 
@@ -18,7 +18,6 @@ fn npid2key(ngramv: & mut Vec<u8>, pid: usize) -> String {
 
 #[inline]
 fn key2npid(key: &str) -> (String, usize) {
-
     let split = key.split(SEPARATOR);
     let v = split.collect::<Vec<&str>>();
 
@@ -32,7 +31,7 @@ fn key2npid(key: &str) -> (String, usize) {
 
 const PROGRESS: u64 = 1_000_000;
 
-pub fn merge(dir_path: &str, nr_shards: usize) -> Result<(), Error>{
+pub fn merge(dir_path: &str, nr_shards: usize) -> Result<(), Error> {
     let mut fsts = vec![];
     for i in 0..nr_shards {
         let fst = try!(raw::Fst::from_path(format!("{}/map.{}", dir_path, i)));
@@ -40,7 +39,9 @@ pub fn merge(dir_path: &str, nr_shards: usize) -> Result<(), Error>{
     }
     let mut union = fsts.iter().collect::<raw::OpBuilder>().union();
 
-    let wtr = BufWriter::new(try!(File::create(format!("{}/union_map.{}.fst", dir_path, nr_shards))));
+    let wtr = BufWriter::new(try!(File::create(
+        format!("{}/union_map.{}.fst", dir_path, nr_shards)
+    )));
     let mut builder = try!(raw::Builder::new(wtr));
 
     let mut count: u64 = 0;
@@ -60,7 +61,6 @@ pub fn merge(dir_path: &str, nr_shards: usize) -> Result<(), Error>{
         if count % PROGRESS == 0 {
             println!("Merging {:.1}M ...", count / PROGRESS);
         }
-
     }
     try!(builder.finish());
 

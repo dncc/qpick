@@ -1,5 +1,5 @@
-extern crate fst;
 extern crate byteorder;
+extern crate fst;
 extern crate serde_json;
 
 use std::sync::mpsc;
@@ -53,7 +53,7 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8)> {
     let bk_size = get_bucket_size();
     file.seek(SeekFrom::Start(addr)).unwrap();
     let mut handle = file.take((bk_size * id_size) as u64);
-    let mut buf=vec![0u8; bk_size*id_size];
+    let mut buf = vec![0u8; bk_size * id_size];
 
     let vlen = len as usize;
     let mut vector = Vec::<(u32, u8, u8)>::with_capacity(vlen);
@@ -63,8 +63,12 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8)> {
 
     if n > 0 {
         for i in 0..vlen {
-            let j = i*id_size;
-            vector.push((LittleEndian::read_u32(&buf[j..j+4]), buf[j+4], buf[j+5]));
+            let j = i * id_size;
+            vector.push((
+                LittleEndian::read_u32(&buf[j..j + 4]),
+                buf[j + 4],
+                buf[j + 5],
+            ));
         }
     }
 
@@ -75,27 +79,24 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8)> {
 #[inline]
 fn get_addr_and_len(ngram: &str, map: &fst::Map) -> Option<(u64, u64)> {
     match map.get(ngram) {
-        Some(val) => {
-            return Some(util::elegant_pair_inv(val))
-        },
+        Some(val) => return Some(util::elegant_pair_inv(val)),
         None => return None,
     }
 }
 
-fn get_shard_ids(ngrams: &HashMap<String, f32>,
-                 map: &fst::Map,
-                 ifd: &File,
-                 count: usize) -> Result<Vec<(u64, f32)>, Error>{
-
+fn get_shard_ids(
+    ngrams: &HashMap<String, f32>,
+    map: &fst::Map,
+    ifd: &File,
+    count: usize,
+) -> Result<Vec<(u64, f32)>, Error> {
     let mut _ids = HashMap::new();
     let id_size = *get_id_size();
     let n = *get_shard_size() as f32;
     for (ngram, ntr) in ngrams {
-
         match get_addr_and_len(ngram, &map) {
             Some((addr, len)) => {
-                for pqid_rem_tr in read_bucket(&ifd, addr*id_size as u64, len).iter() {
-
+                for pqid_rem_tr in read_bucket(&ifd, addr * id_size as u64, len).iter() {
                     let pqid = pqid_rem_tr.0;
                     let reminder = pqid_rem_tr.1;
                     let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
@@ -105,19 +106,21 @@ fn get_shard_ids(ngrams: &HashMap<String, f32>,
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
                     // *sc += weight * ntr;
                     let tr = pqid_rem_tr.2;
-                    let mut weight = (tr as f32)/100.0 ;
+                    let mut weight = (tr as f32) / 100.0;
                     weight = util::max(0.0, ntr - (ntr - weight).abs() as f32);
 
                     let sc = _ids.entry(qid).or_insert(0.0);
-                    *sc += weight * (n/len as f32).log(2.0);
+                    *sc += weight * (n / len as f32).log(2.0);
                 }
-            },
+            }
             None => (),
         }
     }
 
     let mut v: Vec<(u64, f32)> = _ids.iter().map(|(id, sc)| (*id, *sc)).collect::<Vec<_>>();
-    v.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse());
+    v.sort_by(|a, b| {
+        a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse()
+    });
     v.truncate(count);
     Ok(v)
 }
@@ -144,7 +147,9 @@ pub struct QpickResults {
 
 impl QpickResults {
     pub fn new(items_iter: std::vec::IntoIter<(u64, f32)>) -> QpickResults {
-        QpickResults { items_iter: items_iter }
+        QpickResults {
+            items_iter: items_iter,
+        }
     }
 
     pub fn next(&mut self) -> Option<(u64, f32)> {
@@ -154,7 +159,6 @@ impl QpickResults {
 
 impl Qpick {
     fn new(path: String) -> Qpick {
-
         let c = config::Config::init(path.clone());
 
         unsafe {
@@ -167,12 +171,15 @@ impl Qpick {
 
         let stopwords = match stopwords::load(&c.stopwords_path) {
             Ok(stopwords) => stopwords,
-            Err(_) => panic!("Failed to load stop-words!")
+            Err(_) => panic!("Failed to load stop-words!"),
         };
 
         let terms_relevance = match Map::from_path(&c.terms_relevance_path) {
             Ok(terms_relevance) => terms_relevance,
-            Err(_) => panic!("Failed to load terms rel. map: {}!", &c.terms_relevance_path)
+            Err(_) => panic!(
+                "Failed to load terms rel. map: {}!",
+                &c.terms_relevance_path
+            ),
         };
 
         let mut shards = vec![];
@@ -180,12 +187,19 @@ impl Qpick {
             let map_name = format!("{}/map.{}", path, i);
             let map = match Map::from_path(&map_name) {
                 Ok(map) => map,
-                Err(_) => panic!("Failed to load index map: {}!", &map_name)
+                Err(_) => panic!("Failed to load index map: {}!", &map_name),
             };
 
-            let shard = OpenOptions::new().read(true).open(format!("{}/shard.{}", path, i)).unwrap();
-            shards.push(Shard{id: i as u32, shard: shard, map: map});
-        };
+            let shard = OpenOptions::new()
+                .read(true)
+                .open(format!("{}/shard.{}", path, i))
+                .unwrap();
+            shards.push(Shard {
+                id: i as u32,
+                shard: shard,
+                map: map,
+            });
+        }
 
         let thread_pool = Pool::new(c.nr_shards as u32);
 
@@ -203,11 +217,14 @@ impl Qpick {
         Qpick::new(path)
     }
 
-    fn get_ids(&self, ngrams: &HashMap<String, f32>, count: Option<usize>) -> Result<Vec<(u64, f32)>, Error> {
-
+    fn get_ids(
+        &self,
+        ngrams: &HashMap<String, f32>,
+        count: Option<usize>,
+    ) -> Result<Vec<(u64, f32)>, Error> {
         let shard_count = match count {
-           Some(1...50) => 100,
-                 _ => count.unwrap(),
+            Some(1...50) => 100,
+            _ => count.unwrap(),
         };
 
         let mut _ids: Arc<Mutex<HashMap<u64, f32>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -218,16 +235,16 @@ impl Qpick {
         for (ngram, sc) in ngrams {
             let shard_id = util::jump_consistent_hash_str(ngram, self.config.nr_shards as u32);
 
-            let sh_ngrams = shards_ngrams.entry(shard_id as usize).or_insert(HashMap::new());
+            let sh_ngrams = shards_ngrams
+                .entry(shard_id as usize)
+                .or_insert(HashMap::new());
             sh_ngrams.insert(ngram.to_string(), *sc);
         }
 
         let nr_threads = shards_ngrams.len();
 
         self.thread_pool.borrow_mut().scoped(|scoped| {
-
             for sh_id_sh_ngram in shards_ngrams {
-
                 let j = *sh_id_sh_ngram.0;
                 let sh_ngrams = sh_id_sh_ngram.1.clone();
                 let sender = sender.clone();
@@ -235,11 +252,12 @@ impl Qpick {
                 let shards = self.shards.clone();
 
                 scoped.execute(move || {
-
-                    let sh_ids = match get_shard_ids(&sh_ngrams,
-                                                     &shards[j].map,
-                                                     &shards[j].shard,
-                                                     shard_count) {
+                    let sh_ids = match get_shard_ids(
+                        &sh_ngrams,
+                        &shards[j].map,
+                        &shards[j].shard,
+                        shard_count,
+                    ) {
                         Ok(ids) => ids,
                         Err(_) => {
                             println!("Failed to retrive ids from shard: {}", &shards[j].id);
@@ -261,7 +279,6 @@ impl Qpick {
                     sender.send(()).unwrap();
                 });
             }
-
         });
 
         for _ in 0..nr_threads {
@@ -275,7 +292,9 @@ impl Qpick {
         // TODO avoid sorting per shard and turning into vector and sorting again,
         //      use a different data structure
         let mut vdata: Vec<(u64, f32)> = data.into_iter().map(|(id, sc)| (id, sc)).collect();
-        vdata.sort_by(|a, b| {a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse()});
+        vdata.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse()
+        });
         vdata.truncate(count.unwrap_or(100)); //TODO put into config
         Ok(vdata)
     }
@@ -286,8 +305,8 @@ impl Qpick {
             return "".to_string();
         }
 
-        let ref ngrams: HashMap<String, f32> = ngrams::parse(
-            &query, &self.stopwords, &self.terms_relevance);
+        let ref ngrams: HashMap<String, f32> =
+            ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
         let ids = match self.get_ids(ngrams, Some(100)) {
             Ok(ids) => serde_json::to_string(&ids).unwrap(),
@@ -299,11 +318,11 @@ impl Qpick {
 
     pub fn get(&self, query: &str, count: u32) -> QpickResults {
         if query == "" || count == 0 {
-            return QpickResults::new(vec![].into_iter())
+            return QpickResults::new(vec![].into_iter());
         }
 
-        let ref ngrams: HashMap<String, f32> = ngrams::parse(
-            &query, &self.stopwords, &self.terms_relevance);
+        let ref ngrams: HashMap<String, f32> =
+            ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
         let ids = self.get_ids(ngrams, Some(count as usize)).unwrap();
         QpickResults::new(ids.into_iter())
@@ -311,12 +330,12 @@ impl Qpick {
 
     pub fn nget(&self, queries: Vec<&str>, count: u32) -> QpickResults {
         if queries.len() == 0 || count == 0 {
-            return QpickResults::new(vec![].into_iter())
+            return QpickResults::new(vec![].into_iter());
         }
 
         let ref mut ngrams: HashMap<String, f32> = HashMap::new();
         for query in queries {
-            for (ngram, sc) in ngrams::parse(&query, &self.stopwords, &self.terms_relevance){
+            for (ngram, sc) in ngrams::parse(&query, &self.stopwords, &self.terms_relevance) {
                 ngrams.insert(ngram, sc);
             }
         }
@@ -330,19 +349,42 @@ impl Qpick {
         merge::merge(&self.path, self.config.nr_shards as usize)
     }
 
-    pub fn shard(file_path: String, nr_shards: usize, output_dir: String) -> Result<(), std::io::Error> {
-        println!("Creating {:?} shards from {:?} to {:?}", nr_shards, file_path, output_dir);
+    pub fn shard(
+        file_path: String,
+        nr_shards: usize,
+        output_dir: String,
+    ) -> Result<(), std::io::Error> {
+        println!(
+            "Creating {:?} shards from {:?} to {:?}",
+            nr_shards,
+            file_path,
+            output_dir
+        );
         shard::shard(&file_path, nr_shards, &output_dir)
     }
 
-    pub fn index(input_dir: String, shard_name: String,
-                 first_shard: usize, last_shard: usize,
-                 output_dir: String) -> Result<(), Error> {
+    pub fn index(
+        input_dir: String,
+        shard_name: String,
+        first_shard: usize,
+        last_shard: usize,
+        output_dir: String,
+    ) -> Result<(), Error> {
+        println!(
+            "Compiling {:?} shards from {:?} {:?} to {:?}",
+            last_shard - first_shard,
+            input_dir,
+            shard_name,
+            output_dir
+        );
 
-        println!("Compiling {:?} shards from {:?} {:?} to {:?}",
-                 last_shard-first_shard, input_dir, shard_name, output_dir);
-
-        builder::index(&input_dir, &shard_name, first_shard, last_shard, &output_dir)
+        builder::index(
+            &input_dir,
+            &shard_name,
+            first_shard,
+            last_shard,
+            &output_dir,
+        )
     }
 }
 

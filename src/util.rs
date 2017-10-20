@@ -13,11 +13,11 @@ pub enum ElegantPairError {
 
 impl fmt::Display for ElegantPairError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    use self::ElegantPairError::*;
-    match *self {
-        NumbersTooBig(x, y) => {
-        write!(f, "{} and {} give a pair number bigger than 2^64", x, y)
-    }}}
+        use self::ElegantPairError::*;
+        match *self {
+            NumbersTooBig(x, y) => write!(f, "{} and {} give a pair number bigger than 2^64", x, y),
+        }
+    }
 }
 
 impl error::Error for ElegantPairError {
@@ -40,7 +40,10 @@ static KEY_SEPARATOR: &'static str = ":";
 #[inline]
 pub fn qid2pqid(qid: u64, nr_shards: usize) -> (u64, u8) {
     assert!(nr_shards < 256);
-    (qid >> (nr_shards as f32).log(2.0) as u64, (qid % nr_shards as u64) as u8)
+    (
+        qid >> (nr_shards as f32).log(2.0) as u64,
+        (qid % nr_shards as u64) as u8,
+    )
 }
 
 #[inline]
@@ -57,7 +60,7 @@ pub fn ngram2key(ngram: &str, shard_id: u32) -> String {
 pub fn key2ngram(key: String) -> (String, u32) {
     let i = key.rfind(KEY_SEPARATOR).unwrap();
     let ngram = (&key[..i]).to_string();
-    let pid = &key[i+1..].parse::<u32>().unwrap();
+    let pid = &key[i + 1..].parse::<u32>().unwrap();
 
     (ngram, *pid)
 }
@@ -97,7 +100,7 @@ pub fn elegant_pair_inv(z: u64) -> (u64, u64) {
 }
 
 #[inline]
-pub fn max<T:PartialOrd>(a:T, b:T) -> T {
+pub fn max<T: PartialOrd>(a: T, b: T) -> T {
     if a > b {
         a
     } else {
@@ -109,7 +112,6 @@ pub fn max<T:PartialOrd>(a:T, b:T) -> T {
 // https://arxiv.org/pdf/1406.2294.pdf
 // It outputs a bucket number in the range [0, num_buckets).
 pub fn jump_consistent_hash(mut key: u64, num_buckets: u32) -> u32 {
-
     assert!(num_buckets > 0);
 
     let mut b: i64 = -1;
@@ -118,15 +120,16 @@ pub fn jump_consistent_hash(mut key: u64, num_buckets: u32) -> u32 {
     while j < num_buckets as i64 {
         b = j;
         key = key.wrapping_mul(2862933555777941757).wrapping_add(1);
-        j = ((b.wrapping_add(1) as f64) * ((1i64 << 31) as f64) /
-                                          ((key >> 33).wrapping_add(1) as f64)) as i64;
+        j = ((b.wrapping_add(1) as f64) * ((1i64 << 31) as f64)
+            / ((key >> 33).wrapping_add(1) as f64)) as i64;
     }
 
     b as u32
 }
 
 #[inline]
-pub fn jump_consistent_hash_str(key: &str, num_buckets: u32) -> u32 { //
+pub fn jump_consistent_hash_str(key: &str, num_buckets: u32) -> u32 {
+    //
     jump_consistent_hash(seahash::hash(key.as_bytes()), num_buckets)
 }
 
@@ -136,7 +139,10 @@ mod tests {
 
     #[test]
     fn jump_consistent_hash_str_test() {
-        assert_eq!(3, jump_consistent_hash_str("how to put on thai fishing pants", 32));
+        assert_eq!(
+            3,
+            jump_consistent_hash_str("how to put on thai fishing pants", 32)
+        );
     }
 
     #[test]

@@ -13,7 +13,6 @@ pub fn load(path: &str) -> Result<HashSet<String>, Error> {
     for line in file.lines() {
         let sw = line.unwrap();
         stopwords.insert(sw);
-
     }
 
     if stopwords.len() == 0 {
