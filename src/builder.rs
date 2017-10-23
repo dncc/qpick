@@ -1,5 +1,3 @@
-extern crate fst;
-
 use std::fs;
 use fst::{Error, MapBuilder};
 use std::collections::HashMap;
@@ -18,6 +16,7 @@ use util;
 use config;
 
 use std::collections::BinaryHeap;
+use std::cmp::Reverse;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Qid {
@@ -30,11 +29,10 @@ struct Qid {
     sc: u8,
 }
 
-// The priority queue depends on `Ord`.
-// Explicitly implement the trait to turn the queue into a min-heap (by default it's a max-heap).
+// The priority queue depends on `Ord`. Use a min-heap with max-heap(reverse(qid))
 impl Ord for Qid {
     fn cmp(&self, other: &Qid) -> Ordering {
-        other.sc.cmp(&self.sc) // flipped ordering here!
+        self.sc.cmp(&other.sc)
     }
 }
 
@@ -44,8 +42,46 @@ impl PartialOrd for Qid {
         Some(self.cmp(other))
     }
 }
+struct Bucket {
+    qids: BinaryHeap<Reverse<Qid>>,
+    capacity: usize,
+}
 
-fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: usize) {
+impl Bucket {
+    fn with_capacity(capacity: usize) -> Self {
+        Bucket {
+            qids: BinaryHeap::with_capacity(capacity),
+            capacity: capacity,
+        }
+    }
+
+    fn push(&mut self, q: Qid) {
+        if self.qids.len() == self.capacity {
+            match self.qids.peek().unwrap() {
+                &Reverse(topq) => {
+                    if q < topq {
+                        return;
+                    };
+                    self.qids.pop();
+                    self.qids.push(Reverse(q));
+                }
+            }
+        } else {
+            self.qids.push(Reverse(q));
+        }
+    }
+
+    fn to_vec(self) -> Vec<(u32, u8, u8)> {
+        self.qids
+            .into_sorted_vec()
+            .into_iter()
+            .map(|Reverse(q)| (q.id, q.reminder, q.sc))
+            .collect::<Vec<(u32, u8, u8)>>()
+    }
+}
+
+// returns a number of written Qid objects, length of a data vector
+fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: usize) -> u64 {
     file.seek(SeekFrom::Start(addr)).unwrap();
     let mut w = Vec::with_capacity(data.len() * id_size);
     for n in data.iter() {
@@ -54,6 +90,8 @@ fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: 
         w.write_u8(n.2).unwrap();
     }
     file.write_all(w.as_slice()).unwrap();
+
+    data.len() as u64
 }
 
 pub fn index(
@@ -122,7 +160,7 @@ pub fn build_shard(
     out_map_name: &str,
 ) -> Result<(), Error> {
     let mut qcount: u64 = 0;
-    let mut invert: HashMap<String, BinaryHeap<Qid>> = HashMap::new();
+    let mut invert: HashMap<String, Bucket> = HashMap::new();
 
     let f = try!(File::open(input_file));
     let reader = BufReader::with_capacity(5 * 1024 * 1024, &f);
@@ -202,23 +240,15 @@ pub fn build_shard(
             }
         };
 
-        let imap = invert.entry(ngram.to_string()).or_insert(BinaryHeap::new());
+        let bucket = invert
+            .entry(ngram.to_string())
+            .or_insert(Bucket::with_capacity(bk_size));
 
-        let qid_obj = Qid {
+        bucket.push(Qid {
             id: pqid,
             reminder: reminder,
             sc: nsc,
-        };
-
-        if imap.len() >= bk_size {
-            let mut mqid = imap.peek_mut().unwrap();
-            if qid_obj < *mqid {
-                //in fact qid.sc > mqid.sc, due to the flipped ordering
-                *mqid = qid_obj
-            }
-        } else {
-            imap.push(qid_obj);
-        }
+        });
 
         qcount += 1;
         if qcount as u64 % 1_000_000 == 0 {
@@ -227,8 +257,8 @@ pub fn build_shard(
     }
 
     // sort inverted query index by keys (ngrams) and store it to fst file
-    let mut vinvert: Vec<(String, BinaryHeap<Qid>)> =
-        invert.into_iter().map(|(key, qids)| (key, qids)).collect();
+    let mut vinvert: Vec<(String, Bucket)> =
+        invert.into_iter().map(|(key, bck)| (key, bck)).collect();
 
     println!("Sorting {:.1}M keys...", vinvert.len() / 1_000_000);
     vinvert.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
@@ -252,23 +282,16 @@ pub fn build_shard(
         .unwrap();
 
     let mut cursor: u64 = 0;
-    for (key, qids) in vinvert.into_iter() {
-        let qids_len: u64 = qids.len() as u64;
-        if qids_len > bk_size as u64 {
-            panic!(
-                "Error bucket for {:?} is has more than {:?} elements",
-                key,
-                bk_size
-            );
-        }
-        let ids = qids.iter()
-            .map(|qid| (qid.id, qid.reminder, qid.sc))
-            .collect::<Vec<(u32, u8, u8)>>();
-        write_bucket(index_file, cursor * id_size as u64, &ids, id_size);
-        let val = util::elegant_pair(cursor, qids_len).unwrap();
+    for (key, bucket) in vinvert.into_iter() {
+        let n = write_bucket(
+            index_file,
+            cursor * id_size as u64,
+            &bucket.to_vec(),
+            id_size,
+        );
+        let val = util::elegant_pair(cursor, n).unwrap();
         build.insert(key, val).unwrap();
-
-        cursor += qids_len;
+        cursor += n;
     }
 
     // Finish construction of the map and flush its contents to disk.
