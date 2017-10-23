@@ -328,13 +328,13 @@ impl Qpick {
         QpickResults::new(ids.into_iter())
     }
 
-    pub fn nget(&self, queries: Vec<&str>, count: u32) -> QpickResults {
-        if queries.len() == 0 || count == 0 {
+    pub fn nget(&self, qvec: &Vec<String>, count: u32) -> QpickResults {
+        if qvec.len() == 0 || count == 0 {
             return QpickResults::new(vec![].into_iter());
         }
 
         let ref mut ngrams: HashMap<String, f32> = HashMap::new();
-        for query in queries {
+        for query in qvec.iter() {
             for (ngram, sc) in ngrams::parse(&query, &self.stopwords, &self.terms_relevance) {
                 ngrams.insert(ngram, sc);
             }
