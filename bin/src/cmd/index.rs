@@ -20,7 +20,7 @@ Options:
 
 ";
 
-#[derive(Debug, RustcDecodable)]
+#[derive(Debug, Deserialize)]
 struct Args {
     arg_input_dir: String,
     arg_shard_name: String,
@@ -31,7 +31,7 @@ struct Args {
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
 let args: Args = Docopt::new(USAGE)
-    .and_then(|d| d.argv(&argv).decode())
+    .and_then(|d| d.argv(&argv).deserialize())
     .unwrap_or_else(|e| e.exit());
 
     let r = qpick::Qpick::index(

@@ -15,7 +15,7 @@ Options:
 
 ";
 
-#[derive(Debug, RustcDecodable)]
+#[derive(Debug, Deserialize)]
 struct Args {
     arg_path: String,
     arg_nr_shards: usize,
@@ -24,7 +24,7 @@ struct Args {
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
 let args: Args = Docopt::new(USAGE)
-    .and_then(|d| d.argv(&argv).decode())
+    .and_then(|d| d.argv(&argv).deserialize())
     .unwrap_or_else(|e| e.exit());
 
     let r = qpick::Qpick::shard(args.arg_path, args.arg_nr_shards, args.arg_output_dir);

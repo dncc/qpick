@@ -4,8 +4,8 @@ extern crate fst;
 extern crate docopt;
 extern crate qpick;
 extern crate serde;
-extern crate serde_json;
-extern crate rustc_serialize;
+#[macro_use]
+extern crate serde_derive;
 
 use std::env;
 use std::error;
@@ -31,13 +31,12 @@ Options:
     -v, --version  Show version.
 ";
 
-#[derive(Debug, RustcDecodable)]
+#[derive(Debug, Deserialize)]
 struct Args {
     arg_command: Option<Command>,
 }
 
-#[derive(Debug, RustcDecodable)]
-
+#[derive(Debug, Deserialize)]
 enum Command {
     Get,
     Shard,
@@ -62,10 +61,11 @@ impl Command {
 
 fn main() {
     let args: Args = Docopt::new(USAGE)
-                            .and_then(|d| d.options_first(true)
-                                           .version(Some(version()))
-                                           .decode())
-                            .unwrap_or_else(|e| e.exit());
+        .and_then(|d| d.options_first(true)
+                  .version(Some(version()))
+                  .deserialize())
+        .unwrap_or_else(|e| e.exit());
+
     let cmd = args.arg_command.expect("BUG: expected a command");
     if let Err(err) = cmd.run() {
         writeln!(&mut io::stderr(), "{}", err).unwrap();

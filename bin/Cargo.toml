@@ -10,12 +10,11 @@ A command line tool for using with qpick library.
 name = "qpick"
 
 [dependencies]
-serde = "*"
-serde_json = "*"
-fst = "*"
-docopt = "0.6"
+serde = "1"
+serde_derive = "1"
+fst = "0.2"
+docopt = "0.8"
 qpick = { path = "..", version = "0.1.0" }
-rustc-serialize = "0.3"
 
 [profile.release]
 debug = true
