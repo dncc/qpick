@@ -35,8 +35,6 @@ impl error::Error for ElegantPairError {
 
 pub type Result<T> = ::std::result::Result<T, ElegantPairError>;
 
-static KEY_SEPARATOR: &'static str = ":";
-
 #[inline]
 pub fn qid2pqid(qid: u64, nr_shards: usize) -> (u64, u8) {
     assert!(nr_shards < 256);
@@ -49,20 +47,6 @@ pub fn qid2pqid(qid: u64, nr_shards: usize) -> (u64, u8) {
 #[inline]
 pub fn pqid2qid(pqid: u64, reminder: u8, nr_shards: usize) -> u64 {
     (pqid << (nr_shards as f32).log(2.0) as u64) + reminder as u64
-}
-
-#[inline]
-pub fn ngram2key(ngram: &str, shard_id: u32) -> String {
-    format!("{}:{}", ngram, shard_id)
-}
-
-#[inline]
-pub fn key2ngram(key: String) -> (String, u32) {
-    let i = key.rfind(KEY_SEPARATOR).unwrap();
-    let ngram = (&key[..i]).to_string();
-    let pid = &key[i + 1..].parse::<u32>().unwrap();
-
-    (ngram, *pid)
 }
 
 /*
@@ -157,4 +141,12 @@ mod tests {
         assert_eq!(7, jump_consistent_hash(1000011111111, 0));
     }
 
+    #[test]
+    #[should_panic]
+    fn qid2pqid_and_inv_test() {
+        assert_eq!(499998000, pqid2qid(qid2pqid(499998000, 32).0, qid2pqid(499998000, 32).1, 32));
+        assert_eq!(499998001, pqid2qid(qid2pqid(499998001, 57).0, qid2pqid(499998001, 57).1, 57));
+        assert_eq!(499998011, pqid2qid(qid2pqid(499998011, 73).0, qid2pqid(499998011, 73).1, 73));
+        assert_eq!(499998111, pqid2qid(qid2pqid(499998111, 60).0, qid2pqid(499998111, 60).1, 60));
+    }
 }
