@@ -102,7 +102,6 @@ fn get_shard_ids(
                     let reminder = pqid_rem_tr.1;
                     let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
 
-
                     // println!("{:?} {:?} {:?}", ngram, qid, sc);
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
                     // *sc += weight * ntr;
@@ -366,6 +365,7 @@ impl Qpick {
         file_path: String,
         nr_shards: usize,
         output_dir: String,
+        concurrency: usize,
     ) -> Result<(), std::io::Error> {
         println!(
             "Creating {:?} shards from {:?} to {:?}",
@@ -373,7 +373,7 @@ impl Qpick {
             file_path,
             output_dir
         );
-        shard::shard(&file_path, nr_shards, &output_dir)
+        shard::shard(&file_path, nr_shards, &output_dir, concurrency)
     }
 
     pub fn index(
