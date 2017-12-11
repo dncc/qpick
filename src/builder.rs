@@ -50,13 +50,13 @@ struct Bucket {
 impl Bucket {
     fn with_capacity(capacity: usize) -> Self {
         Bucket {
-            qids: BinaryHeap::with_capacity(capacity),
+            qids: BinaryHeap::new(),
             capacity: capacity,
         }
     }
 
     fn push(&mut self, q: Qid) {
-        if self.qids.len() == self.capacity {
+        if self.qids.len() >= self.capacity {
             match self.qids.peek().unwrap() {
                 &Reverse(topq) => {
                     if q < topq {
