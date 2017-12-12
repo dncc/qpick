@@ -16,13 +16,16 @@ use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Sender, Receiver};
 
+use std::collections::HashMap;
+
+const  WRITE_BUFFER_SIZE: usize = 5 * 1024;
+
 /**
 Reads data from a single input file by multiple threads so that each i-th thread
-reads every i-th row in the file. This should have probably been done with multi
-threaded single-sender-multiple-receivers message passing, w/o broadcasting, had
-it been supported in the rust's std library.
-**/
-
+reads every i-th row in the file. This should have been done with multi threaded
+one-sender-many-receivers message passing, w/o broadcasting, but this hasn't yet
+been supported in the rust's std library.
+ **/
 pub fn shard(
     file_path: &str,
     nr_shards: usize,
@@ -62,6 +65,8 @@ pub fn shard(
             let f = BufWriter::new(file);
             shards.push(f);
         }
+
+        let mut shards_ngrams: HashMap<u32, String> = HashMap::new();
 
         let tr_map = match Map::from_path(&c.terms_relevance_path) {
             Ok(tr_map) => tr_map,
@@ -106,18 +111,39 @@ pub fn shard(
                     // a query id that is bigger than 2**32 overflows u64 in pairing function.
                     // When reading from the index the shard id is used to get the original query id.
                     let line = format!("{}\t{}\t{}\t{}\n", pqid, reminder, ngram, qsc);
-                    shards[shard_id as usize]
-                        .write_all(line.as_bytes())
-                        .expect("Unable to write data");
 
-                    shards[shard_id as usize]
-                        .flush()
-                        .expect("Flush failed");
+                    let sh_lines = shards_ngrams.entry(shard_id).or_insert(String::from(""));
+                    *sh_lines = format!("{}{}", sh_lines, line);
+
+                    if sh_lines.len() > WRITE_BUFFER_SIZE {
+                        shards[shard_id as usize]
+                            .write_all(sh_lines.as_bytes())
+                            .expect("Unable to write data");
+
+                        shards[shard_id as usize]
+                            .flush()
+                            .expect("Flush failed");
+
+                        *sh_lines = String::from("");
+                    }
                 }
 
                 line_count += 1;
                 if line_count as u64 % 1_000_000 == 0 {
                     println!("Processed {:.1}M queries, thread {}", line_count / 1_000_000, i);
+                }
+            }
+
+            // write the reminder
+            for (shard_id, lines) in shards_ngrams {
+                if lines.len() > 0 {
+                    shards[shard_id as usize]
+                        .write_all(lines.as_bytes())
+                        .expect("Unable to write data");
+
+                    shards[shard_id as usize]
+                        .flush()
+                        .expect("Flush failed");
                 }
             }
 
