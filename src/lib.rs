@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::ops::Range;
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -101,7 +102,6 @@ fn get_shard_ids(
                     let reminder = pqid_rem_tr.1;
                     let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
 
-
                     // println!("{:?} {:?} {:?}", ngram, qid, sc);
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
                     // *sc += weight * ntr;
@@ -133,6 +133,7 @@ pub struct Qpick {
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
     thread_pool: RefCell<Pool>,
+    shard_range: Range<u32>,
 }
 
 pub struct Shard {
@@ -158,7 +159,7 @@ impl QpickResults {
 }
 
 impl Qpick {
-    fn new(path: String) -> Qpick {
+    fn new(path: String, shard_range_opt: Option<Range<u32>>) -> Qpick {
         let c = config::Config::init(path.clone());
 
         unsafe {
@@ -168,6 +169,8 @@ impl Qpick {
             BUCKET_SIZE = Some(c.bucket_size);
             SHARD_SIZE = Some(c.shard_size);
         }
+
+        let shard_range = shard_range_opt.unwrap_or((0..c.nr_shards as u32));
 
         let stopwords = match stopwords::load(&c.stopwords_path) {
             Ok(stopwords) => stopwords,
@@ -183,7 +186,7 @@ impl Qpick {
         };
 
         let mut shards = vec![];
-        for i in 0..c.nr_shards {
+        for i in shard_range.start..shard_range.end {
             let map_name = format!("{}/map.{}", path, i);
             let map = match Map::from_path(&map_name) {
                 Ok(map) => map,
@@ -201,7 +204,7 @@ impl Qpick {
             });
         }
 
-        let thread_pool = Pool::new(c.nr_shards as u32);
+        let thread_pool = Pool::new(shard_range.len() as u32);
 
         Qpick {
             config: c,
@@ -210,11 +213,16 @@ impl Qpick {
             terms_relevance: terms_relevance,
             shards: Arc::new(shards),
             thread_pool: RefCell::new(thread_pool),
+            shard_range: shard_range,
         }
     }
 
     pub fn from_path(path: String) -> Self {
-        Qpick::new(path)
+        Qpick::new(path, None)
+    }
+
+    pub fn from_path_with_shard_range(path: String, shard_range: Range<u32>) -> Self {
+        Qpick::new(path, Some(shard_range))
     }
 
     fn get_ids(
@@ -235,6 +243,10 @@ impl Qpick {
         for (ngram, sc) in ngrams {
             let shard_id = util::jump_consistent_hash_str(ngram, self.config.nr_shards as u32);
 
+            if shard_id >= self.shard_range.end || shard_id < self.shard_range.start {
+                continue;
+            }
+
             let sh_ngrams = shards_ngrams
                 .entry(shard_id as usize)
                 .or_insert(HashMap::new());
@@ -245,7 +257,7 @@ impl Qpick {
 
         self.thread_pool.borrow_mut().scoped(|scoped| {
             for sh_id_sh_ngram in shards_ngrams {
-                let j = *sh_id_sh_ngram.0;
+                let j = *sh_id_sh_ngram.0 - self.shard_range.start as usize;
                 let sh_ngrams = sh_id_sh_ngram.1.clone();
                 let sender = sender.clone();
                 let _ids = _ids.clone();
@@ -353,6 +365,7 @@ impl Qpick {
         file_path: String,
         nr_shards: usize,
         output_dir: String,
+        concurrency: usize,
     ) -> Result<(), std::io::Error> {
         println!(
             "Creating {:?} shards from {:?} to {:?}",
@@ -360,7 +373,7 @@ impl Qpick {
             file_path,
             output_dir
         );
-        shard::shard(&file_path, nr_shards, &output_dir)
+        shard::shard(&file_path, nr_shards, &output_dir, concurrency)
     }
 
     pub fn index(

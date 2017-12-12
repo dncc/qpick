@@ -12,14 +12,14 @@ Options:
     -h, --help  Arg path is a path string.
 ";
 
-#[derive(Debug, RustcDecodable)]
+#[derive(Debug, Deserialize)]
 struct Args {
     arg_path: String,
 }
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
     let args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.argv(&argv).decode())
+        .and_then(|d| d.argv(&argv).deserialize())
         .unwrap_or_else(|e| e.exit());
 
     let qpick = qpick::Qpick::from_path(args.arg_path);
