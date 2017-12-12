@@ -11,6 +11,7 @@ use config;
 use stopwords;
 use ngrams;
 
+use std::fs;
 use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Sender, Receiver};
@@ -21,6 +22,7 @@ reads every i-th row in the file. This should have probably been done with multi
 threaded single-sender-multiple-receivers message passing, w/o broadcasting, had
 it been supported in the rust's std library.
 **/
+
 pub fn shard(
     file_path: &str,
     nr_shards: usize,
@@ -28,6 +30,12 @@ pub fn shard(
     nthreads: usize
 ) -> Result<(), Error> {
     println!("Sharding...");
+
+    // delete previous shards if they exist
+    for i in 0..nr_shards {
+        let ref shard_path = format!("{}/queries.{}", output_dir, i);
+        remove_file_if_exists!(shard_path);
+    }
 
     let c = config::Config::init(output_dir.to_string());
 
@@ -45,11 +53,10 @@ pub fn shard(
 
         let mut shards = vec![];
         for i in 0..nr_shards {
-            let file_path = format!("{}/queries.{}", output_dir, i);
             let file = OpenOptions::new()
                 .create(true)
-                .append(true)
-                .open(file_path)
+                .append(true) // will be written by multiple threads
+                .open(format!("{}/queries.{}", output_dir, i))
                 .unwrap();
 
             let f = BufWriter::new(file);
@@ -88,20 +95,24 @@ pub fn shard(
                     _ => v[2..v.len() - 1].join(" "),
                 };
 
-                for (ngram, sc) in &ngrams::parse(query, &stopwords, &tr_map) {
+                let ngrams = &ngrams::parse(query, &stopwords, &tr_map);
+                for (ngram, sc) in ngrams {
                     let shard_id = util::jump_consistent_hash_str(ngram, nr_shards as u32);
 
                     let (pqid, reminder) = util::qid2pqid(qid, nr_shards); // shard id for the query id
                     let qsc = (sc * 100.0).round() as u8;
 
-                    // Note: writes shard id for the query (u32), not query id (u64),
-                    // because a query id that is bigger than 2**32 overflows u64 in pairing function.
+                    // Note: writes u32 shard id for the query, not u64 query id, this is because
+                    // a query id that is bigger than 2**32 overflows u64 in pairing function.
                     // When reading from the index the shard id is used to get the original query id.
                     let line = format!("{}\t{}\t{}\t{}\n", pqid, reminder, ngram, qsc);
-
                     shards[shard_id as usize]
                         .write_all(line.as_bytes())
                         .expect("Unable to write data");
+
+                    shards[shard_id as usize]
+                        .flush()
+                        .expect("Flush failed");
                 }
 
                 line_count += 1;
@@ -118,7 +129,7 @@ pub fn shard(
     for _ in 0..nthreads {
         line_count += receiver.recv().unwrap();
     }
-    println!("Total count of sharded queries {:.1}M", line_count/1_000_000);
+    println!("Total count of sharded queries {:.1}", line_count);
 
     Ok(())
 }
