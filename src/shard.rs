@@ -21,10 +21,26 @@ use std::collections::HashMap;
 const  WRITE_BUFFER_SIZE: usize = 5 * 1024;
 
 /**
+
 Reads data from a single input file by multiple threads so that each i-th thread
 reads every i-th row in the file. This should have been done with multi threaded
 one-sender-many-receivers message passing, w/o broadcasting, but this hasn't yet
 been supported in the rust's std library.
+
+TODO is there a way to use Rayon similar to this( https://github.com/rayon-rs/rayon/issues/297 ):
+
+    let input_file = File::open(&input_path).unwrap();
+    let mut reader = io::BufReader::new(input_file);
+    let result = reader.lines().par_iter();
+
+- batching lines to vector and then par_iter them doesn't look better than the
+current solution ( https://github.com/rayon-rs/rayon/issues/46 ):
+
+    let buffer = String::new();
+    File::open(some_path)?.read_to_string(buffer)?;          // iterate unindexed data once
+    let records: Vec<_> = ParseIter::new(buffer).collect();  // iterate unindexed data again
+    records.par_iter_mut().for_each(do_stuff);               // iterate indexed data in parallel
+
  **/
 pub fn shard(
     file_path: &str,

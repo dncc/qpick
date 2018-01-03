@@ -4,5 +4,10 @@ Cargo.lock
 *.txt
 *.pyc
 *.kv
+*.so
+*.egg
 parts
 index
+*.egg-info
+build
+.data
