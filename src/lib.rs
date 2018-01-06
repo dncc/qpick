@@ -116,7 +116,7 @@ fn get_shard_ids(
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
                     let tr = pqid_rem_tr.2;
                     let mut weight = (tr as f32) / 100.0;
-                    weight = util::max(0.0, weight - (ntr - weight).abs() as f32);
+                    weight = weight - util::max(weight - ntr, 0.0) as f32;
                     let sc = _ids.entry(qid).or_insert(0.0);
                     *sc += weight * (n / len as f32).log(2.0);
                 }
