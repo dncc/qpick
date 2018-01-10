@@ -4,6 +4,16 @@ use std::cmp::PartialOrd;
 
 extern crate seahash;
 
+#[macro_export]
+macro_rules! remove_file_if_exists {
+    ($fn_name:ident) => (
+    match fs::remove_file($fn_name) {
+        Err(err) => println!("Failed to delete previous {}, err: {:?}", $fn_name, err),
+        Ok(_) => println!("Deleted previous file {}", $fn_name),
+        };
+    )
+}
+
 /// An error that occurred while computing elegant pair.
 #[derive(Debug)]
 pub enum ElegantPairError {

@@ -4,6 +4,7 @@ extern crate serde_json;
 
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{Sender, Receiver};
 
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -19,6 +20,7 @@ use std::io::SeekFrom;
 
 use fst::Error;
 
+#[macro_use]
 pub mod util;
 pub mod config;
 pub mod ngrams;
@@ -85,36 +87,49 @@ fn get_addr_and_len(ngram: &str, map: &fst::Map) -> Option<(u64, u64)> {
     }
 }
 
+struct ShardIds {
+    ids: Vec<(u64, f32)>,
+    norm: f32,
+}
+
 fn get_shard_ids(
     ngrams: &HashMap<String, f32>,
     map: &fst::Map,
     ifd: &File,
     count: usize,
-) -> Result<Vec<(u64, f32)>, Error> {
+) -> Result<ShardIds, Error> {
     let mut _ids = HashMap::new();
+    let mut _norm: f32 = 0.0;
+
     let id_size = *get_id_size();
     let n = *get_shard_size() as f32;
     for (ngram, ntr) in ngrams {
+        // IDF score for the ngram
+        let mut _idf: f32 = 0.0;
         match get_addr_and_len(ngram, &map) {
+            // returns physical memory address and length of the vector (not a number of bytes)
             Some((addr, len)) => {
                 for pqid_rem_tr in read_bucket(&ifd, addr * id_size as u64, len).iter() {
                     let pqid = pqid_rem_tr.0;
                     let reminder = pqid_rem_tr.1;
                     let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
-
-                    // println!("{:?} {:?} {:?}", ngram, qid, sc);
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
-                    // *sc += weight * ntr;
                     let tr = pqid_rem_tr.2;
                     let mut weight = (tr as f32) / 100.0;
-                    weight = util::max(0.0, ntr - (ntr - weight).abs() as f32);
-
+                    weight = weight - util::max(weight - ntr, 0.0) as f32;
                     let sc = _ids.entry(qid).or_insert(0.0);
                     *sc += weight * (n / len as f32).log(2.0);
                 }
+                // IDF for existing ngram
+                _idf = (n / len as f32).log(2.0);
             }
-            None => (),
+            None => {
+                // IDF for non existing ngram, occurs for the 1st time
+                _idf = n.log(2.0);
+            },
         }
+        // compute the normalization score
+        _norm += ntr * _idf;
     }
 
     let mut v: Vec<(u64, f32)> = _ids.iter().map(|(id, sc)| (*id, *sc)).collect::<Vec<_>>();
@@ -122,10 +137,12 @@ fn get_shard_ids(
         a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse()
     });
     v.truncate(count);
-    Ok(v)
+
+    Ok(ShardIds{ids: v, norm: _norm})
 }
 
 use std::cell::RefCell;
+
 pub struct Qpick {
     path: String,
     config: config::Config,
@@ -236,7 +253,8 @@ impl Qpick {
         };
 
         let mut _ids: Arc<Mutex<HashMap<u64, f32>>> = Arc::new(Mutex::new(HashMap::new()));
-        let (sender, receiver) = mpsc::channel();
+
+        let (sender, receiver):(Sender<f32>, Receiver<f32>) = mpsc::channel();
 
         let ref mut shards_ngrams: HashMap<usize, HashMap<String, f32>> = HashMap::new();
 
@@ -273,7 +291,7 @@ impl Qpick {
                         Ok(ids) => ids,
                         Err(_) => {
                             println!("Failed to retrive ids from shard: {}", &shards[j].id);
-                            vec![]
+                            ShardIds{ids:vec![], norm: 0.0}
                         }
                     };
 
@@ -283,27 +301,28 @@ impl Qpick {
                         Err(poisoned) => poisoned.into_inner(),
                     };
 
-                    for (qid, qsc) in sh_ids {
+                    for (qid, qsc) in sh_ids.ids {
                         // qid is u64, qsc is f32
                         let sc = _ids.entry(qid).or_insert(0.0);
-                        *sc += qsc
-                    }
-                    sender.send(()).unwrap();
+                        *sc += qsc;
+                    };
+
+                    sender.send((sh_ids.norm)).unwrap();
                 });
             }
         });
 
+        let mut norm: f32 = 0.0;
         for _ in 0..nr_threads {
-            receiver.recv().unwrap();
+            norm += receiver.recv().unwrap();
         }
-
         // deref MutexGuard returned from _ids.lock().unwrap()
         let data = (*_ids.lock().unwrap()).clone();
 
         // turn for into vec and sort, that is expected from python extension
         // TODO avoid sorting per shard and turning into vector and sorting again,
         //      use a different data structure
-        let mut vdata: Vec<(u64, f32)> = data.into_iter().map(|(id, sc)| (id, sc)).collect();
+        let mut vdata: Vec<(u64, f32)> = data.into_iter().map(|(id, sc)| (id, sc/norm)).collect();
         vdata.sort_by(|a, b| {
             a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse()
         });
