@@ -11,8 +11,7 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::ops::Range;
 use std::cmp::{Ordering, PartialOrd};
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use byteorder::{ByteOrder, LittleEndian};
 use fst::Map;
@@ -92,7 +91,7 @@ struct ShardIds {
     norm: f32,
 }
 
-fn get_shard_ids(
+fn get_query_ids(
     ngrams: &HashMap<String, f32>,
     map: &fst::Map,
     ifd: &File,
@@ -117,8 +116,7 @@ fn get_shard_ids(
                     let tr = pqid_rem_tr.2;
                     let mut weight = (tr as f32) / 100.0;
                     weight = weight - util::max(weight - ntr, 0.0) as f32;
-                    let sc = _ids.entry(qid).or_insert(0.0);
-                    *sc += weight * (n / len as f32).log(2.0);
+                    *_ids.entry(qid).or_insert(0.0) += weight * (n / len as f32).log(2.0);
                 }
                 // IDF for existing ngram
                 _idf = (n / len as f32).log(2.0);
@@ -134,7 +132,7 @@ fn get_shard_ids(
 
     let mut v: Vec<(u64, f32)> = _ids.iter().map(|(id, sc)| (*id, *sc)).collect::<Vec<_>>();
     v.sort_by(|a, b| {
-        a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse()
+       a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse()
     });
     v.truncate(count);
 
@@ -282,7 +280,7 @@ impl Qpick {
                 let shards = self.shards.clone();
 
                 scoped.execute(move || {
-                    let sh_ids = match get_shard_ids(
+                    let sh_ids = match get_query_ids(
                         &sh_ngrams,
                         &shards[j].map,
                         &shards[j].shard,
@@ -303,8 +301,7 @@ impl Qpick {
 
                     for (qid, qsc) in sh_ids.ids {
                         // qid is u64, qsc is f32
-                        let sc = _ids.entry(qid).or_insert(0.0);
-                        *sc += qsc;
+                        *_ids.entry(qid).or_insert(0.0) += qsc;
                     };
 
                     sender.send((sh_ids.norm)).unwrap();

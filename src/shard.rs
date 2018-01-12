@@ -14,13 +14,13 @@ use ngrams;
 use std::fs;
 use std::thread;
 use std::sync::mpsc;
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{Receiver, Sender};
 
 use std::collections::HashMap;
 
-const  WRITE_BUFFER_SIZE: usize = 5 * 1024;
+const WRITE_BUFFER_SIZE: usize = 5 * 1024;
 
-/**
+/*
 
 Reads data from a single input file by multiple threads so that each i-th thread
 reads every i-th row in the file. This should have been done with multi threaded
@@ -41,12 +41,12 @@ current solution ( https://github.com/rayon-rs/rayon/issues/46 ):
     let records: Vec<_> = ParseIter::new(buffer).collect();  // iterate unindexed data again
     records.par_iter_mut().for_each(do_stuff);               // iterate indexed data in parallel
 
- **/
+*/
 pub fn shard(
     file_path: &str,
     nr_shards: usize,
     output_dir: &str,
-    nthreads: usize
+    nthreads: usize,
 ) -> Result<(), Error> {
     println!("Sharding...");
 
@@ -63,10 +63,9 @@ pub fn shard(
         Err(_) => panic!("Failed to load stop-words!"),
     };
 
-    let (sender, receiver):(Sender<u64>, Receiver<u64>) = mpsc::channel();
+    let (sender, receiver): (Sender<u64>, Receiver<u64>) = mpsc::channel();
 
     for i in 0..nthreads {
-
         let sender = sender.clone();
         let stopwords = stopwords.clone();
 
@@ -97,7 +96,7 @@ pub fn shard(
 
             for (lnum, line) in reader.lines().enumerate() {
                 if lnum % nthreads != i {
-                    continue
+                    continue;
                 }
 
                 let line = match line {
@@ -136,9 +135,7 @@ pub fn shard(
                             .write_all(sh_lines.as_bytes())
                             .expect("Unable to write data");
 
-                        shards[shard_id as usize]
-                            .flush()
-                            .expect("Flush failed");
+                        shards[shard_id as usize].flush().expect("Flush failed");
 
                         *sh_lines = String::from("");
                     }
@@ -146,7 +143,11 @@ pub fn shard(
 
                 line_count += 1;
                 if line_count as u64 % 1_000_000 == 0 {
-                    println!("Processed {:.1}M queries, thread {}", line_count / 1_000_000, i);
+                    println!(
+                        "Processed {:.1}M queries, thread {}",
+                        line_count / 1_000_000,
+                        i
+                    );
                 }
             }
 
@@ -157,9 +158,7 @@ pub fn shard(
                         .write_all(lines.as_bytes())
                         .expect("Unable to write data");
 
-                    shards[shard_id as usize]
-                        .flush()
-                        .expect("Flush failed");
+                    shards[shard_id as usize].flush().expect("Flush failed");
                 }
             }
 
