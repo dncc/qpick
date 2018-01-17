@@ -96,7 +96,6 @@ fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: 
 
 pub fn index(
     input_dir: &str,
-    shard_name: &str,
     first_shard: usize,
     last_shard: usize,
     output_dir: &str,
@@ -114,7 +113,7 @@ pub fn index(
         let id_size = c.id_size.clone();
         let bucket_size = c.bucket_size.clone();
 
-        let input_file_name = format!("{}/{}.{}", input_dir, shard_name, i);
+        let input_file_name = format!("{}/{}.{}", input_dir, "ngrams", i);
         let out_shard_name = format!("{}/{}.{}", output_dir, "shard", i);
         let out_map_name = format!("{}/{}.{}", output_dir, "map", i);
 

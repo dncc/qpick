@@ -42,6 +42,23 @@ current solution ( https://github.com/rayon-rs/rayon/issues/46 ):
     records.par_iter_mut().for_each(do_stuff);               // iterate indexed data in parallel
 
 */
+
+pub enum QueryType {
+    Q,   // query
+    TUW, // url or title words
+}
+
+impl From<String> for QueryType {
+    fn from(prefix: String) -> Self {
+        match prefix.as_ref() {
+            "qe" => QueryType::Q,
+            "q" => QueryType::Q,
+            _ => QueryType::TUW,
+        }
+    }
+}
+
+
 pub fn shard(
     file_path: &str,
     nr_shards: usize,
@@ -52,7 +69,7 @@ pub fn shard(
 
     // delete previous shards if they exist
     for i in 0..nr_shards {
-        let ref shard_path = format!("{}/queries.{}", output_dir, i);
+        let ref shard_path = format!("{}/ngrams.{}", output_dir, i);
         remove_file_if_exists!(shard_path);
     }
 
@@ -74,7 +91,7 @@ pub fn shard(
             let file = OpenOptions::new()
                 .create(true)
                 .append(true) // will be written by multiple threads
-                .open(format!("{}/queries.{}", output_dir, i))
+                .open(format!("{}/ngrams.{}", output_dir, i))
                 .unwrap();
 
             let f = BufWriter::new(file);
@@ -99,6 +116,8 @@ pub fn shard(
                     continue;
                 }
 
+                let qid = lnum as u64;
+
                 let line = match line {
                     Ok(line) => line,
                     Err(e) => {
@@ -107,24 +126,26 @@ pub fn shard(
                     }
                 };
 
-                let v: Vec<&str> = line.split(":").map(|t| t.trim()).collect();
-
-                let qid = v[0].parse::<u64>().unwrap();
-                let ref query = match v.len() {
-                    3 => v[2].to_string(),
-                    _ => v[2..v.len() - 1].join(" "),
+                let mut v: Vec<&str> = line.split("\t").map(|t| t.trim()).collect();
+                v = v[0].split(":").map(|t| t.trim()).collect();
+                let (prefix, query) = match v.len() {
+                    1 => ("qe".to_string(), v[0].to_string()),
+                    2 => (v[0].to_string(), v[1].to_string()),
+                    _ => (v[0].to_string(), v[1..v.len() - 1].join(" ")),
                 };
 
-                let ngrams = &ngrams::parse(query, &stopwords, &tr_map);
+                let ngrams = &ngrams::parse(&query, &stopwords, &tr_map, QueryType::from(prefix));
+
                 for (ngram, sc) in ngrams {
                     let shard_id = util::jump_consistent_hash_str(ngram, nr_shards as u32);
 
-                    let (pqid, reminder) = util::qid2pqid(qid, nr_shards); // shard id for the query id
+                    // shard id to the query id
+                    let (pqid, reminder) = util::qid2pqid(qid, nr_shards);
                     let qsc = (sc * 100.0).round() as u8;
 
-                    // Note: writes u32 shard id for the query, not u64 query id, this is because
-                    // a query id that is bigger than 2**32 overflows u64 in pairing function.
-                    // When reading from the index the shard id is used to get the original query id.
+                    // Note: writes u32 shard id for the query, not u64 query id, this is
+                    // because a query id that is bigger than 2**32 overflows u64 in pairing
+                    // function. When reading the shard id is used to get the original query id.
                     let line = format!("{}\t{}\t{}\t{}\n", pqid, reminder, ngram, qsc);
 
                     let sh_lines = shards_ngrams.entry(shard_id).or_insert(String::from(""));

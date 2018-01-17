@@ -3,6 +3,8 @@ use fst::Map;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use shard::QueryType;
+
 fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String, f32> {
     let mut missing: HashSet<String> = HashSet::new();
     let mut terms_rel: HashMap<String, f32> = HashMap::new();
@@ -43,11 +45,11 @@ fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String
 }
 
 macro_rules! bow_ngrams {
-    ($wv:ident, $ngrams: ident) => (
+    ($wv:ident, $ngrams: ident, $mult: ident) => (
     if $wv.len() > 0 {
         for i in 0..$wv.len()-1 {
             let (w1, mut w2) = (&$wv[i].0, &$wv[i+1].0);
-            let mut tr = $wv[i].1 + $wv[i+1].1;
+            let mut tr = $mult * ($wv[i].1 + $wv[i+1].1);
             let mut v = String::with_capacity(w1.len()+w2.len()+1);
             if w1 < w2 {
                 v.push_str(w1);
@@ -79,7 +81,12 @@ macro_rules! bow_ngrams {
     })
 }
 
-pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map) -> HashMap<String, f32> {
+pub fn parse(
+    query: &str,
+    stopwords: &HashSet<String>,
+    tr_map: &Map,
+    query_type: QueryType,
+) -> HashMap<String, f32> {
     let mut ngrams: HashMap<String, f32> = HashMap::new();
 
     let wvec = query
@@ -122,9 +129,14 @@ pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map) -> HashMap<
         }
     }
 
+    let mult = match query_type {
+        QueryType::Q => 1.0,
+        QueryType::TUW => 0.95,
+    };
+
     // generate ngrams as bag of words combination of terms c a b d -> ac, bc, ab, ad, bd
-    bow_ngrams!(w_stop, ngrams);
-    bow_ngrams!(wo_stop, ngrams);
+    bow_ngrams!(w_stop, ngrams, mult);
+    bow_ngrams!(wo_stop, ngrams, mult);
 
     return ngrams;
 }

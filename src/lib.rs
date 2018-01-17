@@ -1,12 +1,12 @@
 extern crate byteorder;
 extern crate fst;
-extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
+extern crate serde_json;
 
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{Receiver, Sender};
 
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -29,6 +29,8 @@ pub mod merge;
 pub mod shard;
 pub mod builder;
 pub mod stopwords;
+
+use shard::QueryType;
 
 extern crate scoped_threadpool;
 use scoped_threadpool::Pool;
@@ -90,8 +92,8 @@ fn get_addr_and_len(ngram: &str, map: &fst::Map) -> Option<(u64, u64)> {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Sid {
-   pub id: u64,
-   pub sc: f32
+    pub id: u64,
+    pub sc: f32,
 }
 
 struct ShardIds {
@@ -147,17 +149,22 @@ fn get_query_ids(
             None => {
                 // IDF for non existing ngram, occurs for the 1st time
                 _idf = n.log(2.0);
-            },
+            }
         }
         // compute the normalization score
         _norm += ntr * _idf;
     }
 
-    let mut v: Vec<Sid> = _ids.iter().map(|(id, sc)| Sid{id:*id, sc:*sc}).collect::<Vec<_>>();
-    v.sort_by(|a, b| { a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse() });
+    let mut v: Vec<Sid> = _ids.iter()
+        .map(|(id, sc)| Sid { id: *id, sc: *sc })
+        .collect::<Vec<_>>();
+    v.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse());
     v.truncate(count);
 
-    Ok(ShardIds{ids: v, norm: _norm})
+    Ok(ShardIds {
+        ids: v,
+        norm: _norm,
+    })
 }
 
 use std::cell::RefCell;
@@ -272,7 +279,7 @@ impl Qpick {
         };
 
 
-        let (sender, receiver):(Sender<f32>, Receiver<f32>) = mpsc::channel();
+        let (sender, receiver): (Sender<f32>, Receiver<f32>) = mpsc::channel();
 
         let ref mut shards_ngrams: HashMap<usize, HashMap<String, f32>> = HashMap::new();
 
@@ -300,11 +307,13 @@ impl Qpick {
                 let _ids = _ids.clone();
                 let shards = self.shards.clone();
 
-                let mut sh_ngrams: Vec<(String, f32)> = sh_id_sh_ngram.1.clone()
+                let mut sh_ngrams: Vec<(String, f32)> = sh_id_sh_ngram
+                    .1
+                    .clone()
                     .into_iter()
                     .map(|(n, sc)| (n, sc))
                     .collect();
-                sh_ngrams.sort_by(|a, b| { a.0.partial_cmp(&b.0).unwrap_or(Ordering::Less) });
+                sh_ngrams.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Less));
 
                 scoped.execute(move || {
                     let sh_ids = match get_query_ids(
@@ -316,7 +325,10 @@ impl Qpick {
                         Ok(ids) => ids,
                         Err(_) => {
                             println!("Failed to retrive ids from shard: {}", &shards[j].id);
-                            ShardIds{ids:vec![], norm: 0.0}
+                            ShardIds {
+                                ids: vec![],
+                                norm: 0.0,
+                            }
                         }
                     };
 
@@ -349,8 +361,16 @@ impl Qpick {
         // turn for into vec and sort, that is expected from python extension
         // TODO avoid sorting per shard and turning into vector and sorting again,
         //      use a different data structure
-        let mut vdata: Vec<Sid> = hdata.into_iter().map(|(id, sc)| Sid{id:id, sc:sc/norm}).collect();
-        vdata.sort_by(|a, b| { a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse() });
+        let mut vdata: Vec<Sid> = hdata
+            .into_iter()
+            .map(|(id, sc)| {
+                Sid {
+                    id: id,
+                    sc: sc / norm,
+                }
+            })
+            .collect();
+        vdata.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse());
         vdata.truncate(count.unwrap_or(100)); //TODO put into config
 
         Ok(vdata)
@@ -363,7 +383,7 @@ impl Qpick {
         }
 
         let ref ngrams: HashMap<String, f32> =
-            ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
+            ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
 
         let ids = match self.get_ids(ngrams, Some(100)) {
             Ok(ids) => serde_json::to_string(&ids).unwrap(),
@@ -379,7 +399,7 @@ impl Qpick {
         }
 
         let ref ngrams: HashMap<String, f32> =
-            ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
+            ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
 
         let ids = self.get_ids(ngrams, Some(count as usize)).unwrap();
         QpickResults::new(ids.into_iter())
@@ -392,7 +412,9 @@ impl Qpick {
 
         let ref mut ngrams: HashMap<String, f32> = HashMap::new();
         for query in qvec.iter() {
-            for (ngram, sc) in ngrams::parse(&query, &self.stopwords, &self.terms_relevance) {
+            for (ngram, sc) in
+                ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q)
+            {
                 ngrams.insert(ngram, sc);
             }
         }
@@ -423,26 +445,18 @@ impl Qpick {
 
     pub fn index(
         input_dir: String,
-        shard_name: String,
         first_shard: usize,
         last_shard: usize,
         output_dir: String,
     ) -> Result<(), Error> {
         println!(
-            "Compiling {:?} shards from {:?} {:?} to {:?}",
+            "Compiling {:?} shards from {:?} to {:?}",
             last_shard - first_shard,
             input_dir,
-            shard_name,
             output_dir
         );
 
-        builder::index(
-            &input_dir,
-            &shard_name,
-            first_shard,
-            last_shard,
-            &output_dir,
-        )
+        builder::index(&input_dir, first_shard, last_shard, &output_dir)
     }
 }
 
