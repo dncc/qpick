@@ -54,7 +54,7 @@ make_static_var_and_getter!(get_bucket_size, BUCKET_SIZE, usize);
 make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
 make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
 
-fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8)> {
+fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8, u8)> {
     let id_size = get_id_size();
     let bk_size = get_bucket_size();
     file.seek(SeekFrom::Start(addr)).unwrap();
@@ -62,7 +62,7 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8)> {
     let mut buf = vec![0u8; bk_size * id_size];
 
     let vlen = len as usize;
-    let mut vector = Vec::<(u32, u8, u8)>::with_capacity(vlen);
+    let mut vector = Vec::<(u32, u8, u8, u8)>::with_capacity(vlen);
 
     // failure to read returns 0
     let n = handle.read(&mut buf).unwrap_or(0);
@@ -74,6 +74,7 @@ fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8)> {
                 LittleEndian::read_u32(&buf[j..j + 4]),
                 buf[j + 4],
                 buf[j + 5],
+                buf[j + 6],
             ));
         }
     }
@@ -133,14 +134,14 @@ fn get_query_ids(
         match get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
             Some((addr, len)) => {
-                for pqid_rem_tr in read_bucket(&ifd, addr * id_size as u64, len).iter() {
-                    let pqid = pqid_rem_tr.0;
-                    let reminder = pqid_rem_tr.1;
+                for pqid_rem_tr_f in read_bucket(&ifd, addr * id_size as u64, len).iter() {
+                    let pqid = pqid_rem_tr_f.0;
+                    let reminder = pqid_rem_tr_f.1;
                     let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
-                    let tr = pqid_rem_tr.2;
-                    let mut weight = (tr as f32) / 100.0;
-                    weight = weight - util::max(weight - ntr, 0.0) as f32;
+                    let f = pqid_rem_tr_f.3;
+                    let tr = pqid_rem_tr_f.2;
+                    let weight = util::min((tr as f32) / 100.0, ntr) * (1.0 + f as f32 / 1000.0);
                     *_ids.entry(qid).or_insert(0.0) += weight * (n / len as f32).log(2.0);
                 }
                 // IDF for existing ngram
