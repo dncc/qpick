@@ -186,6 +186,7 @@ pub struct Shard {
     shard: File,
 }
 
+#[derive(Debug)]
 pub struct QpickResults {
     pub items_iter: std::vec::IntoIter<Sid>,
 }

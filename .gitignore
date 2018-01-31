@@ -1,5 +1,5 @@
 target
-Cargo.lock
+*.lock
 *.gz
 *.txt
 *.pyc
@@ -11,3 +11,5 @@ index
 *.egg-info
 build
 .data
+main
+.#*
