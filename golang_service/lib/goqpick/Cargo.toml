@@ -1,0 +1,12 @@
+[package]
+name = "goqpick"
+version = "0.1.0"
+authors = ["Dragan Cvetinovic <dcvetinovic@gmail.com>"]
+
+[lib]
+name = "goqpick"
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"
+qpick = { path = "../../..", version = "0.2.0" }
