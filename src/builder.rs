@@ -27,6 +27,8 @@ struct Qid {
     reminder: u8,
     // score: ngram relevance/score for the query
     sc: u8,
+    // frequency: how many times the query has been seen
+    f: u8,
 }
 
 // The priority queue depends on `Ord`. Use a min-heap with max-heap(reverse(qid))
@@ -47,6 +49,7 @@ struct Bucket {
     capacity: usize,
 }
 
+#[allow(dead_code)]
 impl Bucket {
     fn with_capacity(capacity: usize) -> Self {
         Bucket {
@@ -57,7 +60,7 @@ impl Bucket {
 
     fn push(&mut self, q: Qid) {
         if self.qids.len() >= self.capacity {
-            match self.qids.peek().unwrap() {
+            match self.peek().unwrap() {
                 &Reverse(topq) => {
                     if q < topq {
                         return;
@@ -71,23 +74,36 @@ impl Bucket {
         }
     }
 
-    fn to_vec(self) -> Vec<(u32, u8, u8)> {
+    fn pop(&mut self) -> Option<Reverse<Qid>> {
+        self.qids.pop()
+    }
+
+    fn peek(&mut self) -> Option<&Reverse<Qid>> {
+        self.qids.peek()
+    }
+
+    fn len(self) -> u64 {
+        self.qids.len() as u64
+    }
+
+    fn to_vec(self) -> Vec<(u32, u8, u8, u8)> {
         self.qids
             .into_sorted_vec()
             .into_iter()
-            .map(|Reverse(q)| (q.id, q.reminder, q.sc))
-            .collect::<Vec<(u32, u8, u8)>>()
+            .map(|Reverse(q)| (q.id, q.reminder, q.sc, q.f))
+            .collect::<Vec<(u32, u8, u8, u8)>>()
     }
 }
 
 // returns a number of written Qid objects, length of a data vector
-fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: usize) -> u64 {
+fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8, u8)>, id_size: usize) -> u64 {
     file.seek(SeekFrom::Start(addr)).unwrap();
     let mut w = Vec::with_capacity(data.len() * id_size);
     for n in data.iter() {
         w.write_u32::<LittleEndian>(n.0).unwrap();
         w.write_u8(n.1).unwrap();
         w.write_u8(n.2).unwrap();
+        w.write_u8(n.3).unwrap();
     }
     file.write_all(w.as_slice()).unwrap();
 
@@ -96,7 +112,6 @@ fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: 
 
 pub fn index(
     input_dir: &str,
-    shard_name: &str,
     first_shard: usize,
     last_shard: usize,
     output_dir: &str,
@@ -114,7 +129,7 @@ pub fn index(
         let id_size = c.id_size.clone();
         let bucket_size = c.bucket_size.clone();
 
-        let input_file_name = format!("{}/{}.{}", input_dir, shard_name, i);
+        let input_file_name = format!("{}/{}.{}", input_dir, "ngrams", i);
         let out_shard_name = format!("{}/{}.{}", output_dir, "shard", i);
         let out_map_name = format!("{}/{}.{}", output_dir, "map", i);
 
@@ -226,7 +241,26 @@ pub fn build_shard(
                 }
             },
             None => {
-                println!("Shard {:?} - No query score found", iid);
+                println!("Shard {:?} - query score not found", iid);
+                continue;
+            }
+        };
+
+        let sc_freq = match split.next() {
+            Some(f) => match f.parse::<u8>() {
+                Ok(f) => f,
+                Err(err) => {
+                    println!(
+                        "Shard {:?} - failed to parse ngram score {:?}: {:?}",
+                        iid,
+                        f,
+                        err
+                    );
+                    continue;
+                }
+            },
+            None => {
+                println!("Shard {:?} - query frequency not found", iid);
                 continue;
             }
         };
@@ -239,6 +273,7 @@ pub fn build_shard(
             id: pqid,
             reminder: reminder,
             sc: nsc,
+            f: sc_freq,
         });
 
         qcount += 1;
@@ -289,4 +324,81 @@ pub fn build_shard(
 
     println!("Shard {} created", out_shard_name);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_max_heap_bucket() {
+        let mut b = Bucket::with_capacity(3);
+        b.push(Qid {
+            id: 0,
+            sc: 1 as u8,
+            reminder: 1,
+            f: 2,
+        });
+        b.push(Qid {
+            id: 2,
+            sc: 2 as u8,
+            reminder: 1,
+            f: 2,
+        });
+        b.push(Qid {
+            id: 3,
+            sc: 3 as u8,
+            reminder: 1,
+            f: 2,
+        });
+        b.push(Qid {
+            id: 1,
+            sc: 5 as u8,
+            reminder: 1,
+            f: 2,
+        });
+        b.push(Qid {
+            id: 4,
+            sc: 10 as u8,
+            reminder: 1,
+            f: 2,
+        });
+
+        assert_eq!(
+            b.peek().unwrap(),
+            &Reverse(Qid {
+                id: 3,
+                sc: 3,
+                reminder: 1,
+                f: 2,
+            })
+        );
+
+        b.push(Qid {
+            id: 5,
+            sc: 4 as u8,
+            reminder: 1,
+            f: 2,
+        });
+
+        assert_eq!(
+            b.peek().unwrap(),
+            &Reverse(Qid {
+                id: 5,
+                sc: 4,
+                reminder: 1,
+                f: 2,
+            })
+        );
+        assert_eq!(
+            b.pop().unwrap(),
+            Reverse(Qid {
+                id: 5,
+                sc: 4,
+                reminder: 1,
+                f: 2,
+            })
+        );
+        assert_eq!(b.len(), 2);
+    }
 }
