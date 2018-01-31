@@ -94,8 +94,8 @@ pub fn elegant_pair_inv(z: u64) -> (u64, u64) {
 }
 
 #[inline]
-pub fn max<T: PartialOrd>(a: T, b: T) -> T {
-    if a > b {
+pub fn min<T: PartialOrd>(a: T, b: T) -> T {
+    if a < b {
         a
     } else {
         b
@@ -154,9 +154,21 @@ mod tests {
     #[test]
     #[should_panic]
     fn qid2pqid_and_inv_test() {
-        assert_eq!(499998000, pqid2qid(qid2pqid(499998000, 32).0, qid2pqid(499998000, 32).1, 32));
-        assert_eq!(499998001, pqid2qid(qid2pqid(499998001, 57).0, qid2pqid(499998001, 57).1, 57));
-        assert_eq!(499998011, pqid2qid(qid2pqid(499998011, 73).0, qid2pqid(499998011, 73).1, 73));
-        assert_eq!(499998111, pqid2qid(qid2pqid(499998111, 60).0, qid2pqid(499998111, 60).1, 60));
+        assert_eq!(
+            499998000,
+            pqid2qid(qid2pqid(499998000, 32).0, qid2pqid(499998000, 32).1, 32)
+        );
+        assert_eq!(
+            499998001,
+            pqid2qid(qid2pqid(499998001, 57).0, qid2pqid(499998001, 57).1, 57)
+        );
+        assert_eq!(
+            499998011,
+            pqid2qid(qid2pqid(499998011, 73).0, qid2pqid(499998011, 73).1, 73)
+        );
+        assert_eq!(
+            499998111,
+            pqid2qid(qid2pqid(499998111, 60).0, qid2pqid(499998111, 60).1, 60)
+        );
     }
 }

@@ -107,7 +107,7 @@ pub extern fn qpick_iter_next(ptr: *mut qpick::QpickResults) -> *mut QpickItem {
     let res = mutref_from_ptr!(ptr);
     // let mut iter = res.items.iter();
     match res.next() {
-        Some(qid_sc) => to_raw_ptr(QpickItem { qid: qid_sc.0, sc: qid_sc.1 }),
+        Some(qid) => to_raw_ptr(QpickItem { qid: qid.id, sc: qid.sc }),
         None         => ::std::ptr::null_mut()
     }
 }

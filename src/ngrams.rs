@@ -3,6 +3,8 @@ use fst::Map;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use shard::QueryType;
+
 fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String, f32> {
     let mut missing: HashSet<String> = HashSet::new();
     let mut terms_rel: HashMap<String, f32> = HashMap::new();
@@ -33,7 +35,7 @@ fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String
         sum = terms.len() as f32;
     }
 
-    // set an average term relevance to the missing terms and normalize
+    // assign the average term relevance to the missing terms and normalize
     for t in tset.iter() {
         let rel = terms_rel.entry(t.to_string()).or_insert(avg);
         *rel /= sum;
@@ -43,24 +45,48 @@ fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String
 }
 
 macro_rules! bow_ngrams {
-    ($wv:ident, $ngrams: ident) => (
+    ($wv:ident, $ngrams: ident, $mult: ident) => (
     if $wv.len() > 0 {
-        let mut v: Vec<String>;
         for i in 0..$wv.len()-1 {
-            v = vec![$wv[i].0.clone(), $wv[i+1].0.clone()];
-            v.sort();
-            $ngrams.insert(format!("{} {}", v[0], v[1]), $wv[i].1+$wv[i+1].1);
+            let (w1, mut w2) = (&$wv[i].0, &$wv[i+1].0);
+            let mut tr = $mult * ($wv[i].1 + $wv[i+1].1);
+            let mut v = String::with_capacity(w1.len()+w2.len()+1);
+            if w1 < w2 {
+                v.push_str(w1);
+                v.push_str(" ");
+                v.push_str(w2);
+            } else {
+                v.push_str(w2);
+                v.push_str(" ");
+                v.push_str(w1);
+            }
+            $ngrams.insert(v, tr);
 
             if i < $wv.len()-2 {
-                v = vec![$wv[i].0.clone(), $wv[i+2].0.clone()];
-                v.sort();
-                $ngrams.insert(format!("{} {}", v[0], v[1]), $wv[i].1+$wv[i+2].1);
+                w2 = &$wv[i+2].0;
+                tr = 0.75 * ($wv[i].1 + $wv[i+2].1);
+                v = String::with_capacity(w1.len()+w2.len()+1);
+                if w1 < w2 {
+                    v.push_str(w1);
+                    v.push_str(" ");
+                    v.push_str(w2);
+                } else {
+                    v.push_str(w2);
+                    v.push_str(" ");
+                    v.push_str(w1);
+                }
+                $ngrams.insert(v, tr);
             }
         }
     })
 }
 
-pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map) -> HashMap<String, f32> {
+pub fn parse(
+    query: &str,
+    stopwords: &HashSet<String>,
+    tr_map: &Map,
+    query_type: QueryType,
+) -> HashMap<String, f32> {
     let mut ngrams: HashMap<String, f32> = HashMap::new();
 
     let wvec = query
@@ -76,9 +102,7 @@ pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map) -> HashMap<
     let mut wo_stop: Vec<(String, f32)> = vec![]; // [('best', 0.15), ('search', 0.3)]
     let mut has_stopword = false;
 
-    for i in 0..wvec.len() {
-        let w = wvec[i].clone();
-
+    for w in wvec {
         if stopwords.contains(&w) {
             has_stopword = true;
             tempv.push(w.clone());
@@ -86,7 +110,7 @@ pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map) -> HashMap<
         }
 
         // since we are here the last word is not a stop-word, insert as a unigram
-        ngrams.insert(format!("{}", w.clone()), *terms_rel.get(&w).unwrap());
+        ngrams.insert(w.clone(), *terms_rel.get(&w).unwrap());
 
         if has_stopword {
             tempv.push(w.clone());
@@ -105,9 +129,14 @@ pub fn parse(query: &str, stopwords: &HashSet<String>, tr_map: &Map) -> HashMap<
         }
     }
 
+    let mult = match query_type {
+        QueryType::Q => 1.0,
+        QueryType::TUW => 0.95,
+    };
+
     // generate ngrams as bag of words combination of terms c a b d -> ac, bc, ab, ad, bd
-    bow_ngrams!(w_stop, ngrams);
-    bow_ngrams!(wo_stop, ngrams);
+    bow_ngrams!(w_stop, ngrams, mult);
+    bow_ngrams!(wo_stop, ngrams, mult);
 
     return ngrams;
 }

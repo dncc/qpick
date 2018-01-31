@@ -14,13 +14,13 @@ use ngrams;
 use std::fs;
 use std::thread;
 use std::sync::mpsc;
-use std::sync::mpsc::{Sender, Receiver};
+use std::sync::mpsc::{Receiver, Sender};
 
 use std::collections::HashMap;
 
-const  WRITE_BUFFER_SIZE: usize = 5 * 1024;
+const WRITE_BUFFER_SIZE: usize = 5 * 1024;
 
-/**
+/*
 
 Reads data from a single input file by multiple threads so that each i-th thread
 reads every i-th row in the file. This should have been done with multi threaded
@@ -41,18 +41,35 @@ current solution ( https://github.com/rayon-rs/rayon/issues/46 ):
     let records: Vec<_> = ParseIter::new(buffer).collect();  // iterate unindexed data again
     records.par_iter_mut().for_each(do_stuff);               // iterate indexed data in parallel
 
- **/
+*/
+
+pub enum QueryType {
+    Q,   // query
+    TUW, // url or title words
+}
+
+impl From<String> for QueryType {
+    fn from(prefix: String) -> Self {
+        match prefix.as_ref() {
+            "qe" => QueryType::Q,
+            "q" => QueryType::Q,
+            _ => QueryType::TUW,
+        }
+    }
+}
+
+
 pub fn shard(
     file_path: &str,
     nr_shards: usize,
     output_dir: &str,
-    nthreads: usize
+    nthreads: usize,
 ) -> Result<(), Error> {
     println!("Sharding...");
 
     // delete previous shards if they exist
     for i in 0..nr_shards {
-        let ref shard_path = format!("{}/queries.{}", output_dir, i);
+        let ref shard_path = format!("{}/ngrams.{}", output_dir, i);
         remove_file_if_exists!(shard_path);
     }
 
@@ -63,10 +80,9 @@ pub fn shard(
         Err(_) => panic!("Failed to load stop-words!"),
     };
 
-    let (sender, receiver):(Sender<u64>, Receiver<u64>) = mpsc::channel();
+    let (sender, receiver): (Sender<u64>, Receiver<u64>) = mpsc::channel();
 
     for i in 0..nthreads {
-
         let sender = sender.clone();
         let stopwords = stopwords.clone();
 
@@ -75,7 +91,7 @@ pub fn shard(
             let file = OpenOptions::new()
                 .create(true)
                 .append(true) // will be written by multiple threads
-                .open(format!("{}/queries.{}", output_dir, i))
+                .open(format!("{}/ngrams.{}", output_dir, i))
                 .unwrap();
 
             let f = BufWriter::new(file);
@@ -97,8 +113,10 @@ pub fn shard(
 
             for (lnum, line) in reader.lines().enumerate() {
                 if lnum % nthreads != i {
-                    continue
+                    continue;
                 }
+
+                let mut qid = lnum as u64;
 
                 let line = match line {
                     Ok(line) => line,
@@ -108,25 +126,44 @@ pub fn shard(
                     }
                 };
 
-                let v: Vec<&str> = line.split(":").map(|t| t.trim()).collect();
+                let mut v: Vec<&str> = line.split("\t").map(|t| t.trim()).collect();
 
-                let qid = v[0].parse::<u64>().unwrap();
-                let ref query = match v.len() {
-                    3 => v[2].to_string(),
-                    _ => v[2..v.len() - 1].join(" "),
+                let mut freq = 1;
+                if v.len() == 2 {
+                    freq = v[1].parse::<u32>().unwrap_or(1);
+                }
+                // scale freq weights from 0.001 to 0.1 (store as u8 -> 1, 2, 3, ..., 100)
+                // use to boost _query_ relevance q = q * (1 + f / 1000.0)
+                let sc_freq = util::min(100, freq) as u8;
+
+                v = v[0].split(":").map(|t| t.trim()).collect();
+                let (qid, prefix, query) = match v.len() {
+                    // it's fine if query type is missing
+                    1 => (qid, "qe".to_string(), v[0].to_string()),
+                    // current format q:<query>
+                    2 => (qid, v[0].to_string(), v[1].to_string()),
+                    // previous format 0:q:<query>
+                    3 => (
+                        v[0].parse::<u64>().unwrap(),
+                        v[1].to_string(),
+                        v[2].to_string(),
+                    ),
+                    // something else
+                    _ => panic!("Unknown format of input queries!"),
                 };
 
-                let ngrams = &ngrams::parse(query, &stopwords, &tr_map);
+                let ngrams = &ngrams::parse(&query, &stopwords, &tr_map, QueryType::from(prefix));
                 for (ngram, sc) in ngrams {
                     let shard_id = util::jump_consistent_hash_str(ngram, nr_shards as u32);
 
-                    let (pqid, reminder) = util::qid2pqid(qid, nr_shards); // shard id for the query id
+                    // shard id to the query id
+                    let (pqid, reminder) = util::qid2pqid(qid, nr_shards);
                     let qsc = (sc * 100.0).round() as u8;
 
-                    // Note: writes u32 shard id for the query, not u64 query id, this is because
-                    // a query id that is bigger than 2**32 overflows u64 in pairing function.
-                    // When reading from the index the shard id is used to get the original query id.
-                    let line = format!("{}\t{}\t{}\t{}\n", pqid, reminder, ngram, qsc);
+                    // Note: writes u32 shard id for the query, not u64 query id, this is
+                    // because a query id that is bigger than 2**32 overflows u64 in pairing
+                    // function. When reading the shard id is used to get the original query id.
+                    let line = format!("{}\t{}\t{}\t{}\t{}\n", pqid, reminder, ngram, qsc, sc_freq);
 
                     let sh_lines = shards_ngrams.entry(shard_id).or_insert(String::from(""));
                     *sh_lines = format!("{}{}", sh_lines, line);
@@ -136,9 +173,7 @@ pub fn shard(
                             .write_all(sh_lines.as_bytes())
                             .expect("Unable to write data");
 
-                        shards[shard_id as usize]
-                            .flush()
-                            .expect("Flush failed");
+                        shards[shard_id as usize].flush().expect("Flush failed");
 
                         *sh_lines = String::from("");
                     }
@@ -146,7 +181,11 @@ pub fn shard(
 
                 line_count += 1;
                 if line_count as u64 % 1_000_000 == 0 {
-                    println!("Processed {:.1}M queries, thread {}", line_count / 1_000_000, i);
+                    println!(
+                        "Processed {:.1}M queries, thread {}",
+                        line_count / 1_000_000,
+                        i
+                    );
                 }
             }
 
@@ -157,9 +196,7 @@ pub fn shard(
                         .write_all(lines.as_bytes())
                         .expect("Unable to write data");
 
-                    shards[shard_id as usize]
-                        .flush()
-                        .expect("Flush failed");
+                    shards[shard_id as usize].flush().expect("Flush failed");
                 }
             }
 
