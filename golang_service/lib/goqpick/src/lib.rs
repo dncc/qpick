@@ -1,4 +1,4 @@
-#![crate_type = "cdylib"]
+#![crate_type = "dylib"]
 
 extern crate libc;
 extern crate qpick;
@@ -76,10 +76,23 @@ pub extern "C" fn string_free(s: *mut libc::c_char) {
 #[no_mangle]
 pub extern "C" fn qpick_get_as_string(
     ptr: *mut Qpick,
-    query: *mut libc::c_char) -> *const libc::c_char {
+    query: *mut libc::c_char,
+    count: libc::uint32_t) -> *const libc::c_char {
 
     let query = cstr_to_str(query);
-    let s = ref_from_ptr!(ptr).search(query);
+    let s = ref_from_ptr!(ptr).get_str(query, count);
+    CString::new(s).unwrap().into_raw()
+}
+
+#[no_mangle]
+pub extern "C" fn qpick_nget_as_string(
+    ptr: *mut Qpick,
+    queries: *mut libc::c_char,
+    count: libc::uint32_t) -> *const libc::c_char {
+
+    let queries = cstr_to_str(queries);
+    let s = ref_from_ptr!(ptr).nget_str(queries, count);
+
     CString::new(s).unwrap().into_raw()
 }
 
@@ -122,8 +135,7 @@ pub extern "C" fn qpick_get(
     count: libc::uint32_t) -> *mut qpick::QpickResults {
 
     let query = cstr_to_str(query);
-    let res = ref_from_ptr!(ptr).get(query, count);
-    println!("{:?}", res);
+    let res = ref_from_ptr!(ptr).get_results(query, count);
     to_raw_ptr(res)
 }
 
@@ -147,5 +159,5 @@ pub extern "C" fn qpick_nget(
     queries: *mut Vec<String>,
     count: libc::uint32_t) -> *mut qpick::QpickResults {
 
-    to_raw_ptr(ref_from_ptr!(ptr).nget(ref_from_ptr!(queries), count))
+    to_raw_ptr(ref_from_ptr!(ptr).nget_results(ref_from_ptr!(queries), count))
 }

@@ -51,7 +51,7 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
     }
 
     let r = qpick.get(&args.arg_query, args.arg_count);
-    let v: Vec<(u64, f32)> = r.items_iter.map(|q| (q.id, q.sc)).collect();
+    let v: Vec<(u64, f32)> = r.iter().map(|q| (q.id, q.sc)).collect();
     println!("{:?}", v);
 
     Ok(())

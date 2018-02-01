@@ -28,6 +28,7 @@ var (
 //Holds arguments to be passed to service QPickRPCService in RPC call
 type Args struct {
 	Q string
+	C uint32
 }
 
 //Represents service QPickRPCService with method Multiply
@@ -37,10 +38,15 @@ type QPickRPCService int
 // type Result int
 type Result string
 
-func (t *QPickRPCService) Get(r *http.Request, args *Args, result *Result) error {
-	var res = C.qpick_get_as_string(qpick, C.CString(args.Q))
+func (t *QPickRPCService) NGet(r *http.Request, args *Args, result *Result) error {
+	var res = C.qpick_nget_as_string(qpick, C.CString(args.Q), C.uint32_t(args.C))
 	*result = Result(C.GoString(res))
-	log.Printf("Query: %v, Result: %v", args.Q, C.GoString(res))
+	return nil
+}
+
+func (t *QPickRPCService) Get(r *http.Request, args *Args, result *Result) error {
+	var res = C.qpick_get_as_string(qpick, C.CString(args.Q), C.uint32_t(args.C))
+	*result = Result(C.GoString(res))
 	return nil
 }
 

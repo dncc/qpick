@@ -5,7 +5,7 @@ authors = ["Dragan Cvetinovic <dcvetinovic@gmail.com>"]
 
 [lib]
 name = "goqpick"
-crate-type = ["cdylib"]
+crate-type = ["dylib"]
 
 [dependencies]
 libc = "0.2"

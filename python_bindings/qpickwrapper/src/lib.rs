@@ -76,10 +76,21 @@ pub extern "C" fn string_free(s: *mut libc::c_char) {
 #[no_mangle]
 pub extern "C" fn qpick_get_as_string(
     ptr: *mut Qpick,
-    query: *mut libc::c_char) -> *const libc::c_char {
+    query: *mut libc::c_char,
+    count: libc::uint32_t) -> *const libc::c_char {
 
     let query = cstr_to_str(query);
-    let s = ref_from_ptr!(ptr).search(query);
+    let s = ref_from_ptr!(ptr).get_str(query, count);
+    CString::new(s).unwrap().into_raw()
+}
+
+#[no_mangle]
+pub extern "C" fn qpick_nget_as_string(
+    ptr: *mut Qpick,
+    queries: *mut Vec<String>,
+    count: libc::uint32_t) -> *const libc::c_char {
+
+    let s = ref_from_ptr!(ptr).nget_str(ref_from_ptr!(queries), count);
     CString::new(s).unwrap().into_raw()
 }
 
@@ -107,7 +118,7 @@ pub extern fn qpick_iter_next(ptr: *mut qpick::QpickResults) -> *mut QpickItem {
     let res = mutref_from_ptr!(ptr);
     // let mut iter = res.items.iter();
     match res.next() {
-        Some(qid) => to_raw_ptr(QpickItem { qid: qid.id, sc: qid.sc }),
+        Some(qid_sc) => to_raw_ptr(QpickItem { qid: qid_sc.id, sc: qid_sc.sc }),
         None         => ::std::ptr::null_mut()
     }
 }
@@ -122,7 +133,8 @@ pub extern "C" fn qpick_get(
     count: libc::uint32_t) -> *mut qpick::QpickResults {
 
     let query = cstr_to_str(query);
-    to_raw_ptr(ref_from_ptr!(ptr).get(query, count))
+    let res = ref_from_ptr!(ptr).get_results(query, count);
+    to_raw_ptr(res)
 }
 
 // --- nget queries api
@@ -145,5 +157,5 @@ pub extern "C" fn qpick_nget(
     queries: *mut Vec<String>,
     count: libc::uint32_t) -> *mut qpick::QpickResults {
 
-    to_raw_ptr(ref_from_ptr!(ptr).nget(ref_from_ptr!(queries), count))
+    to_raw_ptr(ref_from_ptr!(ptr).nget_results(ref_from_ptr!(queries), count))
 }

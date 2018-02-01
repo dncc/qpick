@@ -15,5 +15,6 @@ def rpc_call(url, method, args):
 	return json.loads(response)
 
 url = 'http://localhost:1234/rpc'
-args = {'Q': 'berserk episode'}
-print rpc_call(url, "QPickRPCService.Get", args)
+queries = ['berserk episode']
+args = {'Q': json.dumps(queries), 'C': 100}
+print rpc_call(url, "QPickRPCService.NGet", args).get('result', [])

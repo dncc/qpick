@@ -378,38 +378,49 @@ impl Qpick {
         Ok(vdata)
     }
 
-    // TODO deprecated, to be removed
-    pub fn search(&self, query: &str) -> String {
-        if query == "" {
-            return "".to_string();
-        }
+    pub fn get_str(&self, query: &str, count: u32) -> String {
+        let mut res: Vec<(u64, f32)> = self.get(query, 30*count)
+            .into_iter()
+            .map(|s| (s.id, s.sc))
+            .collect();
+        res.truncate(count as usize);
 
-        let ref ngrams: HashMap<String, f32> =
-            ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
-
-        let ids = match self.get_ids(ngrams, Some(100)) {
-            Ok(ids) => serde_json::to_string(&ids).unwrap(),
-            Err(err) => err.to_string(),
-        };
-
-        ids
+        serde_json::to_string(&res).unwrap()
     }
 
-    pub fn get(&self, query: &str, count: u32) -> QpickResults {
+    pub fn nget_str(&self, queries: &str, count: u32) -> String {
+        let qvec: Vec<String> = serde_json::from_str(queries).unwrap();
+        let mut res: Vec<(u64, f32)> = self.nget(&qvec, 30*count)
+            .into_iter()
+            .map(|s| (s.id, s.sc))
+            .collect();
+        res.truncate(count as usize);
+
+        serde_json::to_string(&res).unwrap()
+    }
+
+    pub fn get_results(&self, query: &str, count: u32) -> QpickResults {
+        QpickResults::new(self.get(query, count).into_iter())
+    }
+
+    pub fn nget_results(&self, qvec: &Vec<String>, count: u32) -> QpickResults {
+        QpickResults::new(self.nget(qvec, count).into_iter())
+    }
+
+    pub fn get(&self, query: &str, count: u32) -> Vec<Sid> {
         if query == "" || count == 0 {
-            return QpickResults::new(vec![].into_iter());
+            return vec![];
         }
 
         let ref ngrams: HashMap<String, f32> =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
 
-        let ids = self.get_ids(ngrams, Some(count as usize)).unwrap();
-        QpickResults::new(ids.into_iter())
+        self.get_ids(ngrams, Some(count as usize)).unwrap()
     }
 
-    pub fn nget(&self, qvec: &Vec<String>, count: u32) -> QpickResults {
+    pub fn nget(&self, qvec: &Vec<String>, count: u32) -> Vec<Sid> {
         if qvec.len() == 0 || count == 0 {
-            return QpickResults::new(vec![].into_iter());
+            return vec![];
         }
 
         let ref mut ngrams: HashMap<String, f32> = HashMap::new();
@@ -421,8 +432,7 @@ impl Qpick {
             }
         }
 
-        let ids = self.get_ids(ngrams, Some(count as usize)).unwrap();
-        QpickResults::new(ids.into_iter())
+        self.get_ids(ngrams, Some(count as usize)).unwrap()
     }
 
     pub fn merge(&self) -> Result<(), Error> {
