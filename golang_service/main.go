@@ -41,6 +41,7 @@ type Result string
 func (t *QPickRPCService) NGet(r *http.Request, args *Args, result *Result) error {
 	var res = C.qpick_nget_as_string(qpick, C.CString(args.Q), C.uint32_t(args.C))
 	*result = Result(C.GoString(res))
+	log.Printf("Q: %v", args.Q)
 	return nil
 }
 

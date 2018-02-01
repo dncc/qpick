@@ -4,10 +4,7 @@ extern crate fst;
 extern crate serde_derive;
 extern crate serde_json;
 
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{Receiver, Sender};
-
+use std::sync::Arc;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
@@ -31,9 +28,6 @@ pub mod builder;
 pub mod stopwords;
 
 use shard::QueryType;
-
-extern crate scoped_threadpool;
-use scoped_threadpool::Pool;
 
 macro_rules! make_static_var_and_getter {
     ($fn_name:ident, $var_name:ident, $t:ty) => (
@@ -119,7 +113,7 @@ impl PartialEq for Sid {
 }
 
 fn get_query_ids(
-    ngrams: &Vec<(String, f32)>,
+    ngrams: &HashMap<String, f32>,
     map: &fst::Map,
     ifd: &File,
     count: usize,
@@ -128,7 +122,7 @@ fn get_query_ids(
     let mut _norm: f32 = 0.0;
     let id_size = *get_id_size();
     let n = *get_shard_size() as f32;
-    for &(ref ngram, ntr) in ngrams {
+    for (ngram, ntr) in ngrams {
         // IDF score for the ngram
         let mut _idf: f32 = 0.0;
         match get_addr_and_len(ngram, &map) {
@@ -141,7 +135,7 @@ fn get_query_ids(
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
                     let f = pqid_rem_tr_f.3;
                     let tr = pqid_rem_tr_f.2;
-                    let weight = util::min((tr as f32) / 100.0, ntr) * (1.0 + f as f32 / 1000.0);
+                    let weight = util::min((tr as f32) / 100.0, *ntr) * (1.0 + f as f32 / 1000.0);
                     *_ids.entry(qid).or_insert(0.0) += weight * (n / len as f32).log(2.0);
                 }
                 // IDF for existing ngram
@@ -168,20 +162,16 @@ fn get_query_ids(
     })
 }
 
-use std::cell::RefCell;
-
 pub struct Qpick {
     path: String,
     config: config::Config,
     stopwords: HashSet<String>,
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
-    thread_pool: RefCell<Pool>,
     shard_range: Range<u32>,
 }
 
 pub struct Shard {
-    id: u32,
     map: fst::Map,
     shard: File,
 }
@@ -202,6 +192,10 @@ impl QpickResults {
         <std::vec::IntoIter<Sid> as std::iter::Iterator>::next(&mut self.items_iter)
     }
 }
+
+extern crate rayon;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
 
 impl Qpick {
     fn new(path: String, shard_range_opt: Option<Range<u32>>) -> Qpick {
@@ -243,13 +237,10 @@ impl Qpick {
                 .open(format!("{}/shard.{}", path, i))
                 .unwrap();
             shards.push(Shard {
-                id: i as u32,
                 shard: shard,
                 map: map,
             });
         }
-
-        let thread_pool = Pool::new(shard_range.len() as u32);
 
         Qpick {
             config: c,
@@ -257,7 +248,6 @@ impl Qpick {
             stopwords: stopwords,
             terms_relevance: terms_relevance,
             shards: Arc::new(shards),
-            thread_pool: RefCell::new(thread_pool),
             shard_range: shard_range,
         }
     }
@@ -280,9 +270,6 @@ impl Qpick {
             _ => count.unwrap(),
         };
 
-
-        let (sender, receiver): (Sender<f32>, Receiver<f32>) = mpsc::channel();
-
         let ref mut shards_ngrams: HashMap<usize, HashMap<String, f32>> = HashMap::new();
 
         for (ngram, sc) in ngrams {
@@ -298,77 +285,33 @@ impl Qpick {
             sh_ngrams.insert(ngram.to_string(), *sc);
         }
 
-        let nr_threads = shards_ngrams.len();
-        let nr_shards = (self.shard_range.end - self.shard_range.start) as usize;
-        let mut _ids: Arc<Mutex<Vec<Vec<Sid>>>> = Arc::new(Mutex::new(vec![vec![]; nr_shards]));
+        let shard_ids: Vec<ShardIds> = shards_ngrams
+            .par_iter()
+            .map(|sh_ng| {
+                get_query_ids(
+                    &sh_ng.1,
+                    &self.shards[*sh_ng.0].map,
+                    &self.shards[*sh_ng.0].shard,
+                    shard_count,
+                ).unwrap()
+            })
+            .collect();
 
-        self.thread_pool.borrow_mut().scoped(|scoped| {
-            for sh_id_sh_ngram in shards_ngrams {
-                let j = *sh_id_sh_ngram.0 - self.shard_range.start as usize;
-                let sender = sender.clone();
-                let _ids = _ids.clone();
-                let shards = self.shards.clone();
-
-                let mut sh_ngrams: Vec<(String, f32)> = sh_id_sh_ngram
-                    .1
-                    .clone()
-                    .into_iter()
-                    .map(|(n, sc)| (n, sc))
-                    .collect();
-                sh_ngrams.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Less));
-
-                scoped.execute(move || {
-                    let sh_ids = match get_query_ids(
-                        &sh_ngrams,
-                        &shards[j].map,
-                        &shards[j].shard,
-                        shard_count,
-                    ) {
-                        Ok(ids) => ids,
-                        Err(_) => {
-                            println!("Failed to retrive ids from shard: {}", &shards[j].id);
-                            ShardIds {
-                                ids: vec![],
-                                norm: 0.0,
-                            }
-                        }
-                    };
-
-                    // obtaining lock might fail, handle it
-                    let mut _ids = match _ids.lock() {
-                        Ok(_ids) => _ids,
-                        Err(poisoned) => poisoned.into_inner(),
-                    };
-
-                    _ids[j] = sh_ids.ids;
-                    sender.send((sh_ids.norm)).unwrap();
-                });
-            }
-        });
-
-        let mut norm: f32 = 0.0;
-        for _ in 0..nr_threads {
-            norm += receiver.recv().unwrap();
-        }
-
-        // deref MutexGuard returned from _ids.lock().unwrap()
-        let data = (*_ids.lock().unwrap()).clone();
         let mut hdata: HashMap<u64, f32> = HashMap::new();
-        for sh_vec in data {
-            for s in sh_vec {
+        let mut norm: f32 = 0.0;
+        for sh_id in shard_ids.iter() {
+            for s in sh_id.ids.iter() {
                 *hdata.entry(s.id).or_insert(0.0) += s.sc;
             }
+            norm += sh_id.norm;
         }
 
-        // turn for into vec and sort, that is expected from python extension
-        // TODO avoid sorting per shard and turning into vector and sorting again,
-        //      use a different data structure
         let mut vdata: Vec<Sid> = hdata
-            .into_iter()
+            .iter()
             .map(|(id, sc)| {
                 Sid {
-                    id: id,
-                    sc: sc / norm,
+                    id: *id,
+                    sc: *sc / norm,
                 }
             })
             .collect();
@@ -379,7 +322,7 @@ impl Qpick {
     }
 
     pub fn get_str(&self, query: &str, count: u32) -> String {
-        let mut res: Vec<(u64, f32)> = self.get(query, 30*count)
+        let mut res: Vec<(u64, f32)> = self.get(query, 30 * count)
             .into_iter()
             .map(|s| (s.id, s.sc))
             .collect();
@@ -390,7 +333,7 @@ impl Qpick {
 
     pub fn nget_str(&self, queries: &str, count: u32) -> String {
         let qvec: Vec<String> = serde_json::from_str(queries).unwrap();
-        let mut res: Vec<(u64, f32)> = self.nget(&qvec, 30*count)
+        let mut res: Vec<(u64, f32)> = self.nget(&qvec, 30 * count)
             .into_iter()
             .map(|s| (s.id, s.sc))
             .collect();
@@ -415,7 +358,10 @@ impl Qpick {
         let ref ngrams: HashMap<String, f32> =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
 
-        self.get_ids(ngrams, Some(count as usize)).unwrap()
+        match self.get_ids(ngrams, Some(count as usize)) {
+            Ok(ids) => ids,
+            Err(err) => panic!("Failed to get ids with: {message}", message = err),
+        }
     }
 
     pub fn nget(&self, qvec: &Vec<String>, count: u32) -> Vec<Sid> {
@@ -432,7 +378,10 @@ impl Qpick {
             }
         }
 
-        self.get_ids(ngrams, Some(count as usize)).unwrap()
+        match self.get_ids(ngrams, Some(count as usize)) {
+            Ok(ids) => ids,
+            Err(err) => panic!("Failed to get ids with: {message}", message = err),
+        }
     }
 
     pub fn merge(&self) -> Result<(), Error> {

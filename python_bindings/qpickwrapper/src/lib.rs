@@ -87,10 +87,12 @@ pub extern "C" fn qpick_get_as_string(
 #[no_mangle]
 pub extern "C" fn qpick_nget_as_string(
     ptr: *mut Qpick,
-    queries: *mut Vec<String>,
+    queries: *mut libc::c_char,
     count: libc::uint32_t) -> *const libc::c_char {
 
-    let s = ref_from_ptr!(ptr).nget_str(ref_from_ptr!(queries), count);
+    let queries = cstr_to_str(queries);
+    let s = ref_from_ptr!(ptr).nget_str(queries, count);
+
     CString::new(s).unwrap().into_raw()
 }
 
