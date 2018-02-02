@@ -1,9 +1,11 @@
 extern crate byteorder;
 extern crate fst;
+extern crate libc;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
 
+use std::io;
 use std::sync::Arc;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -14,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 
 use byteorder::{ByteOrder, LittleEndian};
 use fst::Map;
+use fst::raw::{Fst, MmapReadOnly};
 use std::io::SeekFrom;
 
 use fst::Error;
@@ -82,6 +85,25 @@ fn get_addr_and_len(ngram: &str, map: &fst::Map) -> Option<(u64, u64)> {
     match map.get(ngram) {
         Some(val) => return Some(util::elegant_pair_inv(val)),
         None => return None,
+    }
+}
+
+// Advise the OS on the random access pattern of data.
+// Taken from https://docs.rs/crate/madvise/0.1.0
+#[cfg(unix)]
+fn advise_ram(data: &[u8]) -> io::Result<()> {
+    unsafe {
+        let result = libc::madvise(
+            util::as_ptr(data) as *mut libc::c_void,
+            data.len(),
+            libc::MADV_RANDOM as libc::c_int,
+        );
+
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 }
 
@@ -226,10 +248,14 @@ impl Qpick {
 
         let mut shards = vec![];
         for i in shard_range.start..shard_range.end {
-            let map_name = format!("{}/map.{}", path, i);
-            let map = match Map::from_path(&map_name) {
-                Ok(map) => map,
-                Err(_) => panic!("Failed to load index map: {}!", &map_name),
+            let map_path = format!("{}/map.{}", path, i);
+
+            // advice OS on random access to the map file and create Fst object from it
+            let map_file = MmapReadOnly::open_path(&map_path).unwrap();
+            unsafe { advise_ram(map_file.as_slice()).expect("Advisory failed") };
+            let map = match Fst::from_mmap(map_file) {
+                Ok(fst) => Map::from(fst),
+                Err(_) => panic!("Failed to load index map: {}!", &map_path),
             };
 
             let shard = OpenOptions::new()

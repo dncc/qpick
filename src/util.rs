@@ -59,6 +59,11 @@ pub fn pqid2qid(pqid: u64, reminder: u8, nr_shards: usize) -> u64 {
     (pqid << (nr_shards as f32).log(2.0) as u64) + reminder as u64
 }
 
+#[inline]
+pub fn as_ptr<T>(v: &[T]) -> *const T {
+    v as *const [T] as *const T
+}
+
 /*
     Elegant pairing function http://szudzik.com/ElegantPairing.pdf
     TODO implement with bignum, otherwise might overflow!
