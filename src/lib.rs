@@ -215,10 +215,6 @@ impl QpickResults {
     }
 }
 
-extern crate rayon;
-use rayon::iter::IntoParallelRefIterator;
-use rayon::iter::ParallelIterator;
-
 impl Qpick {
     fn new(path: String, shard_range_opt: Option<Range<u32>>) -> Qpick {
         let c = config::Config::init(path.clone());
@@ -312,7 +308,7 @@ impl Qpick {
         }
 
         let shard_ids: Vec<ShardIds> = shards_ngrams
-            .par_iter()
+            .iter()
             .map(|sh_ng| {
                 get_query_ids(
                     &sh_ng.1,
