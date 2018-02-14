@@ -1,3 +1,6 @@
+#![feature(test)]
+#[macro_use]
+extern crate lazy_static;
 extern crate byteorder;
 extern crate fst;
 extern crate libc;
@@ -151,8 +154,8 @@ fn get_query_ids(
                     let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
                     // TODO cosine similarity, normalize ngrams relevance at indexing time
                     let f = pqid_rem_tr_f.3;
-                    let tr = pqid_rem_tr_f.2;
-                    let weight = util::min((tr as f32) / 100.0, *ntr) * (1.0 + f as f32 / 1000.0);
+                    let mut tr = (pqid_rem_tr_f.2 as f32) / 100.0;
+                    let weight = util::min(tr, *ntr) * (1.0 + f as f32 / 1000.0);
                     *_ids.entry(qid).or_insert(0.0) += weight * (n / len as f32).log(2.0);
                 }
                 // IDF for existing ngram

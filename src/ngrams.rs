@@ -1,4 +1,7 @@
 extern crate fst;
+extern crate regex;
+extern crate test;
+
 use fst::Map;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -64,7 +67,7 @@ macro_rules! bow_ngrams {
 
             if i < $wv.len()-2 {
                 w2 = &$wv[i+2].0;
-                tr = 0.75 * ($wv[i].1 + $wv[i+2].1);
+                tr = 0.97 *($wv[i].1 + $wv[i+2].1);
                 v = String::with_capacity(w1.len()+w2.len()+1);
                 if w1 < w2 {
                     v.push_str(w1);
@@ -81,6 +84,16 @@ macro_rules! bow_ngrams {
     })
 }
 
+const RM_SYMBOLS: &str = "@#!";
+lazy_static! {
+    static ref RE: regex::Regex = regex::Regex::new(&format!("[{}]", RM_SYMBOLS)).unwrap();
+}
+
+#[inline]
+fn normalize(query: &str) -> String {
+    RE.replace_all(query, "").to_string().to_lowercase()
+}
+
 pub fn parse(
     query: &str,
     stopwords: &HashSet<String>,
@@ -89,9 +102,9 @@ pub fn parse(
 ) -> HashMap<String, f32> {
     let mut ngrams: HashMap<String, f32> = HashMap::new();
 
-    let wvec = query
+    let wvec = normalize(query)
         .split(" ")
-        .map(|w| w.to_string().to_lowercase())
+        .map(|w| w.to_string())
         .collect::<Vec<String>>();
     let terms_rel = get_terms_relevance(&wvec, tr_map);
 
@@ -103,7 +116,7 @@ pub fn parse(
     let mut has_stopword = false;
 
     for w in wvec {
-        if stopwords.contains(&w) {
+        if stopwords.contains(&w) || w.len() < 3 {
             has_stopword = true;
             tempv.push(w.clone());
             continue;
@@ -139,4 +152,40 @@ pub fn parse(
     bow_ngrams!(wo_stop, ngrams, mult);
 
     return ngrams;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::test::Bencher;
+
+    #[inline]
+    fn normalize_repl() -> String {
+        "#Hello@World!#"
+            .to_lowercase()
+            .replace("@", "")
+            .replace("#", "")
+            .replace("!", "")
+            .to_string()
+    }
+
+    #[test]
+    fn test_regex_repl() {
+        assert_eq!(&normalize("#Hello@World!#"), "helloworld");
+    }
+
+    #[bench]
+    fn bench_regex_repl(b: &mut Bencher) {
+        b.iter(|| normalize("#Hello@World!#"));
+    }
+
+    #[test]
+    fn test_string_repl() {
+        assert_eq!(&normalize_repl(), "helloworld");
+    }
+
+    #[bench]
+    fn bench_string_repl(b: &mut Bencher) {
+        b.iter(|| normalize_repl());
+    }
 }
