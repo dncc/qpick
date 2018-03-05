@@ -77,7 +77,11 @@ pub fn shard(
 
     let stopwords = match stopwords::load(&c.stopwords_path) {
         Ok(stopwords) => stopwords,
-        Err(_) => panic!("Failed to load stop-words!"),
+        Err(err) => panic!(
+            "Failed to load stop-words from: {}! Err: {:?}",
+            &c.stopwords_path,
+            err
+        ),
     };
 
     let (sender, receiver): (Sender<u64>, Receiver<u64>) = mpsc::channel();
@@ -102,7 +106,11 @@ pub fn shard(
 
         let tr_map = match Map::from_path(&c.terms_relevance_path) {
             Ok(tr_map) => tr_map,
-            Err(_) => panic!("Failed to load terms rel. map!"),
+            Err(err) => panic!(
+                "Failed to load terms rel. map from: {}! Err: {:?}",
+                &c.terms_relevance_path,
+                err
+            ),
         };
 
         let f = try!(File::open(file_path));

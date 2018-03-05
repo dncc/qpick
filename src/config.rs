@@ -15,7 +15,7 @@ pub struct Config {
 }
 
 impl Config {
-    fn load_config_file(path: String) -> Result<String, Error> {
+    fn load_config_file(path: &str) -> Result<String, Error> {
         let f = try!(File::open(format!("{}/config.json", path)));
         let mut buf = BufReader::new(&f);
         let mut config = String::new();
@@ -25,7 +25,11 @@ impl Config {
     }
 
     pub fn init(path: String) -> Self {
-        let config_content = Config::load_config_file(path).unwrap();
+        let config_content = match Config::load_config_file(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("Failed to load {}/confg.json, err: {:?}", path, err),
+        };
+
         let config: Value = serde_json::from_str(&config_content).unwrap();
 
         let nr_shards = match config["nr_shards"] {

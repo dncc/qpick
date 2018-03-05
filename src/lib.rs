@@ -231,14 +231,19 @@ impl Qpick {
 
         let stopwords = match stopwords::load(&c.stopwords_path) {
             Ok(stopwords) => stopwords,
-            Err(_) => panic!("Failed to load stop-words!"),
+            Err(err) => panic!(
+                "Failed to load stop-words from: {}! Err: {:?}",
+                &c.stopwords_path,
+                err
+            ),
         };
 
         let terms_relevance = match Map::from_path(&c.terms_relevance_path) {
             Ok(terms_relevance) => terms_relevance,
-            Err(_) => panic!(
-                "Failed to load terms rel. map: {}!",
-                &c.terms_relevance_path
+            Err(err) => panic!(
+                "Failed to load terms rel. map from: {}! Err: {:?}",
+                &c.terms_relevance_path,
+                err
             ),
         };
 
