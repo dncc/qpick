@@ -4,12 +4,11 @@ extern crate libc;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate memmap;
 
 use std::io;
 use std::sync::Arc;
-use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::prelude::*;
 use std::ops::Range;
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::{HashMap, HashSet};
@@ -17,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use byteorder::{ByteOrder, LittleEndian};
 use fst::Map;
 use fst::raw::{Fst, MmapReadOnly};
-use std::io::SeekFrom;
+use memmap::Mmap;
 
 use fst::Error;
 
@@ -51,29 +50,20 @@ make_static_var_and_getter!(get_bucket_size, BUCKET_SIZE, usize);
 make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
 make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
 
-fn read_bucket(mut file: &File, addr: u64, len: u64) -> Vec<(u32, u8, u8, u8)> {
+fn read_bucket(mmap: &memmap::Mmap, addr: usize, len: usize) -> Vec<(u32, u8, u8, u8)> {
     let id_size = get_id_size();
-    let bk_size = get_bucket_size();
-    file.seek(SeekFrom::Start(addr)).unwrap();
-    let mut handle = file.take((bk_size * id_size) as u64);
-    let mut buf = vec![0u8; bk_size * id_size];
-
-    let vlen = len as usize;
+    let vlen = util::min(len, *get_bucket_size());
+    let buf = &mmap[addr..addr + vlen * id_size];
     let mut vector = Vec::<(u32, u8, u8, u8)>::with_capacity(vlen);
 
-    // failure to read returns 0
-    let n = handle.read(&mut buf).unwrap_or(0);
-
-    if n > 0 {
-        for i in 0..vlen {
-            let j = i * id_size;
-            vector.push((
-                LittleEndian::read_u32(&buf[j..j + 4]),
-                buf[j + 4],
-                buf[j + 5],
-                buf[j + 6],
-            ));
-        }
+    for i in 0..vlen {
+        let j = i * id_size;
+        vector.push((
+            LittleEndian::read_u32(&buf[j..j + 4]),
+            buf[j + 4],
+            buf[j + 5],
+            buf[j + 6],
+        ));
     }
 
     vector
@@ -137,8 +127,7 @@ impl PartialEq for Sid {
 fn get_query_ids(
     ngrams: &HashMap<String, f32>,
     map: &fst::Map,
-    ifd: &File,
-    count: usize,
+    ifd: &memmap::Mmap,
 ) -> Result<ShardIds, Error> {
     let mut _ids = HashMap::new();
     let mut _norm: f32 = 0.0;
@@ -150,7 +139,7 @@ fn get_query_ids(
         match get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
             Some((addr, len)) => {
-                for pqid_rem_tr_f in read_bucket(&ifd, addr * id_size as u64, len).iter() {
+                for pqid_rem_tr_f in read_bucket(ifd, addr as usize * id_size, len as usize).iter() {
                     let pqid = pqid_rem_tr_f.0;
                     let reminder = pqid_rem_tr_f.1;
                     let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
@@ -176,7 +165,6 @@ fn get_query_ids(
         .map(|(id, sc)| Sid { id: *id, sc: *sc })
         .collect::<Vec<_>>();
     v.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse());
-    v.truncate(count);
 
     Ok(ShardIds {
         ids: v,
@@ -195,7 +183,7 @@ pub struct Qpick {
 
 pub struct Shard {
     map: fst::Map,
-    shard: File,
+    shard: Mmap,
 }
 
 #[derive(Debug)]
@@ -227,7 +215,7 @@ impl Qpick {
             SHARD_SIZE = Some(c.shard_size);
         }
 
-        let shard_range = shard_range_opt.unwrap_or((0..c.nr_shards as u32));
+        let shard_range = shard_range_opt.unwrap_or(0..c.nr_shards as u32);
 
         let stopwords = match stopwords::load(&c.stopwords_path) {
             Ok(stopwords) => stopwords,
@@ -253,16 +241,26 @@ impl Qpick {
 
             // advice OS on random access to the map file and create Fst object from it
             let map_file = MmapReadOnly::open_path(&map_path).unwrap();
-            unsafe { advise_ram(map_file.as_slice()).expect("Advisory failed") };
+            unsafe {
+                advise_ram(map_file.as_slice())
+                    .expect(&format!("Advisory failed for map {}", i))
+            };
             let map = match Fst::from_mmap(map_file) {
                 Ok(fst) => Map::from(fst),
                 Err(_) => panic!("Failed to load index map: {}!", &map_path),
             };
 
-            let shard = OpenOptions::new()
-                .read(true)
-                .open(format!("{}/shard.{}", path, i))
-                .unwrap();
+            let shard = unsafe {
+                Mmap::map(
+                &OpenOptions::new()
+                    .read(true)
+                    .open(format!("{}/shard.{}", path, i))
+                    .unwrap()
+                ).unwrap()
+            };
+
+            advise_ram(&shard[..]).expect(&format!("Advisory failed for shard {}", i));
+
             shards.push(Shard {
                 shard: shard,
                 map: map,
@@ -292,10 +290,6 @@ impl Qpick {
         ngrams: &HashMap<String, f32>,
         count: Option<usize>,
     ) -> Result<Vec<Sid>, Error> {
-        let shard_count = match count {
-            Some(1...50) => 100,
-            _ => count.unwrap(),
-        };
 
         let ref mut shards_ngrams: HashMap<usize, HashMap<String, f32>> = HashMap::new();
 
@@ -319,7 +313,6 @@ impl Qpick {
                     &sh_ng.1,
                     &self.shards[*sh_ng.0].map,
                     &self.shards[*sh_ng.0].shard,
-                    shard_count,
                 ).unwrap()
             })
             .collect();

@@ -3,6 +3,10 @@ name = "qpick"
 version = "0.3.0"
 authors = ["Dragan Cvetinovic <dcvetinovic@gmail.com>"]
 
+[features]
+mmap = ["memmap"]
+default = ["mmap"]
+
 [[bin]]
 name="qpick"
 path="src/lib.rs"
@@ -16,3 +20,4 @@ byteorder = "0.5.3"
 fst = "0.1.35"
 seahash = "3.0.5"
 libc = "0.2.36"
+memmap = { version = "0.6.0", optional = true }
