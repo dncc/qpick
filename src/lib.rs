@@ -45,10 +45,16 @@ macro_rules! make_static_var_and_getter {
     })
 }
 
+extern crate rayon;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
+use rayon::{ThreadPool, ThreadPoolBuilder};
+
 make_static_var_and_getter!(get_id_size, ID_SIZE, usize);
 make_static_var_and_getter!(get_bucket_size, BUCKET_SIZE, usize);
 make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
 make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
+make_static_var_and_getter!(get_thread_pool_size, THREAD_POOL_SIZE, usize);
 
 fn read_bucket(mmap: &memmap::Mmap, addr: usize, len: usize) -> Vec<(u32, u8, u8, u8)> {
     let id_size = get_id_size();
@@ -179,6 +185,7 @@ pub struct Qpick {
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
     shard_range: Range<u32>,
+    thread_pool: rayon::ThreadPool,
 }
 
 pub struct Shard {
@@ -213,6 +220,7 @@ impl Qpick {
             ID_SIZE = Some(c.id_size);
             BUCKET_SIZE = Some(c.bucket_size);
             SHARD_SIZE = Some(c.shard_size);
+            THREAD_POOL_SIZE = Some(c.thread_pool_size);
         }
 
         let shard_range = shard_range_opt.unwrap_or(0..c.nr_shards as u32);
@@ -267,6 +275,11 @@ impl Qpick {
             });
         }
 
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(*get_thread_pool_size())
+            .build()
+            .unwrap();
+
         Qpick {
             config: c,
             path: path,
@@ -274,6 +287,7 @@ impl Qpick {
             terms_relevance: terms_relevance,
             shards: Arc::new(shards),
             shard_range: shard_range,
+            thread_pool: pool,
         }
     }
 
@@ -307,7 +321,7 @@ impl Qpick {
         }
 
         let shard_ids: Vec<ShardIds> = shards_ngrams
-            .iter()
+            .par_iter()
             .map(|sh_ng| {
                 get_query_ids(
                     &sh_ng.1,
@@ -327,7 +341,7 @@ impl Qpick {
         }
 
         let mut vdata: Vec<Sid> = hdata
-            .iter()
+            .par_iter()
             .map(|(id, sc)| {
                 Sid {
                     id: *id,
