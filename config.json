@@ -1,8 +1,10 @@
 {
     "id_size": 7,
-    "bucket_size": 10000,
-    "nr_shards": 32,
+    "bucket_size": 2500,
+    "nr_shards": 8,
     "shard_size": 250000000,
     "terms_relevance_path": "/run/shm/qpick/terms_relevance.fst",
-    "stopwords_path": "/run/shm/qpick/stopwords.txt"
+    "stopwords_path": "/run/shm/qpick/stopwords.txt",
+    "thread_pool_size": 2
 }
+

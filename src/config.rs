@@ -11,6 +11,7 @@ pub struct Config {
     pub nr_shards: usize,
     pub shard_size: usize, // number of ids in the shard
     pub terms_relevance_path: String,
+    pub thread_pool_size: usize,
     pub stopwords_path: String,
 }
 
@@ -49,7 +50,7 @@ impl Config {
 
         let id_size = match config["id_size"] {
             Value::Number(ref id_size) => id_size.as_u64().unwrap(),
-            _ => 5,
+            _ => 7,
         };
 
         let terms_relevance_path = match config["terms_relevance_path"] {
@@ -62,6 +63,11 @@ impl Config {
             _ => panic!("Failed to load stopwords path name from the config file!"),
         };
 
+        let thread_pool_size = match config["thread_pool_size"] {
+            Value::Number(ref thread_pool_size) => thread_pool_size.as_u64().unwrap(),
+            _ => panic!("Failed to load thread_pool_size from the config file!"),
+        };
+
         Config {
             id_size: id_size as usize,
             bucket_size: bucket_size as usize,
@@ -69,6 +75,7 @@ impl Config {
             shard_size: shard_size as usize,
             terms_relevance_path: terms_relevance_path.to_string(),
             stopwords_path: stopwords_path.to_string(),
+            thread_pool_size: thread_pool_size as usize,
         }
     }
 }
