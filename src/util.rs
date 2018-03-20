@@ -177,3 +177,7 @@ mod tests {
         );
     }
 }
+
+pub static BRED: &str = "\x1B[0;31m";
+pub static BYELL: &str = "\x1B[0;33m";
+pub static ECOL: &str = "\x1B[0m";

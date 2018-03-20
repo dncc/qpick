@@ -10,9 +10,9 @@ pub struct Config {
     pub bucket_size: usize, // max number of query ids in a ngram bucket
     pub nr_shards: usize,
     pub shard_size: usize, // number of ids in the shard
-    pub terms_relevance_path: String,
+    pub terms_relevance_file: String,
     pub thread_pool_size: usize,
-    pub stopwords_path: String,
+    pub stopwords_file: String,
 }
 
 impl Config {
@@ -53,14 +53,14 @@ impl Config {
             _ => 7,
         };
 
-        let terms_relevance_path = match config["terms_relevance_path"] {
-            Value::String(ref terms_relevance_path) => terms_relevance_path.as_str(),
-            _ => panic!("Failed to load terms relevance path from the config file!"),
+        let terms_relevance_file = match config["terms_relevance_file"] {
+            Value::String(ref terms_relevance_file) => terms_relevance_file.as_str(),
+            _ => panic!("Failed to load terms relevance file from the config!"),
         };
 
-        let stopwords_path = match config["stopwords_path"] {
-            Value::String(ref stopwords_path) => stopwords_path.as_str(),
-            _ => panic!("Failed to load stopwords path name from the config file!"),
+        let stopwords_file = match config["stopwords_file"] {
+            Value::String(ref stopwords_file) => stopwords_file.as_str(),
+            _ => panic!("Failed to load stopwords name from the config!"),
         };
 
         let thread_pool_size = match config["thread_pool_size"] {
@@ -73,8 +73,8 @@ impl Config {
             bucket_size: bucket_size as usize,
             nr_shards: nr_shards as usize,
             shard_size: shard_size as usize,
-            terms_relevance_path: terms_relevance_path.to_string(),
-            stopwords_path: stopwords_path.to_string(),
+            terms_relevance_file: terms_relevance_file.to_string(),
+            stopwords_file: stopwords_file.to_string(),
             thread_pool_size: thread_pool_size as usize,
         }
     }

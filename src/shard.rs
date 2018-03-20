@@ -7,6 +7,7 @@ use fst::Map;
 use std::fs::OpenOptions;
 
 use util;
+use util::{BYELL, ECOL, BRED};
 use config;
 use stopwords;
 use ngrams;
@@ -75,13 +76,17 @@ pub fn shard(
 
     let c = config::Config::init(output_dir.to_string());
 
-    let stopwords = match stopwords::load(&c.stopwords_path) {
+    let stopwords_path = &format!("{}/{}", output_dir, c.stopwords_file);
+    let stopwords = match stopwords::load(stopwords_path) {
         Ok(stopwords) => stopwords,
-        Err(err) => panic!(
-            "Failed to load stop-words from: {}! Err: {:?}",
-            &c.stopwords_path,
-            err
-        ),
+        Err(_) => panic!([
+            BYELL,
+            "No such file or directory: ",
+            ECOL,
+            BRED,
+            stopwords_path,
+            ECOL
+        ].join("")),
     };
 
     let (sender, receiver): (Sender<u64>, Receiver<u64>) = mpsc::channel();
@@ -104,13 +109,17 @@ pub fn shard(
 
         let mut shards_ngrams: HashMap<u32, String> = HashMap::new();
 
-        let tr_map = match Map::from_path(&c.terms_relevance_path) {
+        let terms_relevance_path = &format!("{}/{}", output_dir, c.terms_relevance_file);
+        let tr_map = match Map::from_path(terms_relevance_path) {
             Ok(tr_map) => tr_map,
-            Err(err) => panic!(
-                "Failed to load terms rel. map from: {}! Err: {:?}",
-                &c.terms_relevance_path,
-                err
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                terms_relevance_path,
+                ECOL
+            ].join("")),
         };
 
         let f = try!(File::open(file_path));

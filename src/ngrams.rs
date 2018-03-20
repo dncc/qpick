@@ -1,6 +1,5 @@
 extern crate fst;
 extern crate regex;
-extern crate test;
 
 use fst::Map;
 use std::collections::HashMap;
@@ -174,18 +173,9 @@ mod tests {
         assert_eq!(&normalize("#Hello@World!#"), "helloworld");
     }
 
-    #[bench]
-    fn bench_regex_repl(b: &mut Bencher) {
-        b.iter(|| normalize("#Hello@World!#"));
-    }
-
     #[test]
     fn test_string_repl() {
         assert_eq!(&normalize_repl(), "helloworld");
     }
 
-    #[bench]
-    fn bench_string_repl(b: &mut Bencher) {
-        b.iter(|| normalize_repl());
-    }
 }

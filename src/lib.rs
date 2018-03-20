@@ -1,4 +1,3 @@
-#![feature(test)]
 #[macro_use]
 extern crate lazy_static;
 extern crate byteorder;
@@ -33,6 +32,8 @@ pub mod builder;
 pub mod stopwords;
 
 use shard::QueryType;
+
+use util::{BYELL, ECOL, BRED};
 
 macro_rules! make_static_var_and_getter {
     ($fn_name:ident, $var_name:ident, $t:ty) => (
@@ -228,22 +229,30 @@ impl Qpick {
 
         let shard_range = shard_range_opt.unwrap_or(0..c.nr_shards as u32);
 
-        let stopwords = match stopwords::load(&c.stopwords_path) {
+        let stopwords_path = &format!("{}/{}", path, c.stopwords_file);
+        let stopwords = match stopwords::load(stopwords_path) {
             Ok(stopwords) => stopwords,
-            Err(err) => panic!(
-                "Failed to load stop-words from: {}! Err: {:?}",
-                &c.stopwords_path,
-                err
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                stopwords_path,
+                ECOL
+            ].join("")),
         };
 
-        let terms_relevance = match Map::from_path(&c.terms_relevance_path) {
+        let terms_relevance_path = &format!("{}/{}", path, c.terms_relevance_file);
+        let terms_relevance = match Map::from_path(terms_relevance_path) {
             Ok(terms_relevance) => terms_relevance,
-            Err(err) => panic!(
-                "Failed to load terms rel. map from: {}! Err: {:?}",
-                &c.terms_relevance_path,
-                err
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                terms_relevance_path,
+                ECOL
+            ].join("")),
         };
 
         let mut shards = vec![];
