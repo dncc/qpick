@@ -80,6 +80,25 @@ macro_rules! bow_ngrams {
                 $ngrams.insert(v, tr);
             }
         }
+
+       // the first and the last term only for titles (bow, len=4)
+       if $wv.len() > 3 && $mult < 1.0 {
+           let (t1, t2) = (&$wv[0], &$wv[&$wv.len()-1]);
+           let (w1, w2) = (&t1.0, &t2.0);
+           let tr = $mult * (t1.1 + t2.1);
+           let mut v = String::with_capacity(w1.len()+w2.len()+1);
+           if w1 < w2 {
+               v.push_str(w1);
+               v.push_str(" ");
+               v.push_str(w2);
+           } else {
+               v.push_str(w2);
+               v.push_str(" ");
+               v.push_str(w1);
+           }
+           $ngrams.insert(v, tr);
+       }
+
     })
 }
 
@@ -177,5 +196,4 @@ mod tests {
     fn test_string_repl() {
         assert_eq!(&normalize_repl(), "helloworld");
     }
-
 }
