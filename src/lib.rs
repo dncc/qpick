@@ -52,7 +52,7 @@ macro_rules! make_static_var_and_getter {
 extern crate rayon;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use rayon::{ThreadPool, ThreadPoolBuilder};
+use rayon::{ThreadPoolBuilder};
 
 make_static_var_and_getter!(get_id_size, ID_SIZE, usize);
 make_static_var_and_getter!(get_bucket_size, BUCKET_SIZE, usize);
@@ -146,6 +146,7 @@ fn get_query_ids(
     for (ngram, ntr) in ngrams {
         // IDF score for the ngram
         let mut _idf: f32 = 0.0;
+
         match get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
             Some((addr, len)) => {
@@ -159,6 +160,7 @@ fn get_query_ids(
                     let weight = util::min(tr, *ntr) * (1.0 + f as f32 / 1000.0);
                     *_ids.entry(qid).or_insert(0.0) += weight * (n / len as f32).log(2.0);
                 }
+
                 // IDF for existing ngram
                 _idf = (n / len as f32).log(2.0);
             }
@@ -189,7 +191,6 @@ pub struct Qpick {
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
     shard_range: Range<u32>,
-    thread_pool: ThreadPool,
 }
 
 pub struct Shard {
@@ -287,7 +288,7 @@ impl Qpick {
             });
         }
 
-        let pool = ThreadPoolBuilder::new()
+        ThreadPoolBuilder::new()
             .num_threads(*get_thread_pool_size())
             .build()
             .unwrap();
@@ -299,7 +300,6 @@ impl Qpick {
             terms_relevance: terms_relevance,
             shards: Arc::new(shards),
             shard_range: shard_range,
-            thread_pool: pool,
         }
     }
 

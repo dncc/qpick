@@ -44,6 +44,8 @@ impl PartialOrd for Qid {
         Some(self.cmp(other))
     }
 }
+
+#[derive(Debug)]
 struct Bucket {
     qids: BinaryHeap<Reverse<Qid>>,
     capacity: usize,

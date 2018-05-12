@@ -7,6 +7,87 @@ use std::collections::HashSet;
 
 use shard::QueryType;
 
+macro_rules! bow_ngrams {
+    ($wv:ident, $ngrams: ident, $mult: ident) => (
+    if $wv.len() > 1 {
+        for i in 0..$wv.len()-1 {
+            let (w1, mut w2) = (&$wv[i].0, &$wv[i+1].0);
+            let mut tr = $mult * ($wv[i].1 + $wv[i+1].1);
+            let mut v = String::with_capacity(w1.len()+w2.len()+1);
+            if w1 < w2 {
+                v.push_str(w1);
+                v.push_str(" ");
+                v.push_str(w2);
+            } else {
+                v.push_str(w2);
+                v.push_str(" ");
+                v.push_str(w1);
+            }
+            $ngrams.insert(v, tr);
+
+            if i < $wv.len()-2 {
+                w2 = &$wv[i+2].0;
+                tr = 0.97 *($wv[i].1 + $wv[i+2].1);
+                v = String::with_capacity(w1.len()+w2.len()+1);
+                if w1 < w2 {
+                    v.push_str(w1);
+                    v.push_str(" ");
+                    v.push_str(w2);
+                } else {
+                    v.push_str(w2);
+                    v.push_str(" ");
+                    v.push_str(w1);
+                }
+                $ngrams.insert(v, tr);
+            }
+       }
+
+       // the first and the last term only for titles (bow, len=4)
+       if $wv.len() > 3 && $mult < 1.0 {
+           let (t1, t2) = (&$wv[0], &$wv[&$wv.len()-1]);
+           let (w1, w2) = (&t1.0, &t2.0);
+           let tr = $mult * (t1.1 + t2.1);
+           let mut v = String::with_capacity(w1.len()+w2.len()+1);
+           if w1 < w2 {
+               v.push_str(w1);
+               v.push_str(" ");
+               v.push_str(w2);
+           } else {
+               v.push_str(w2);
+               v.push_str(" ");
+               v.push_str(w1);
+           }
+           $ngrams.insert(v, tr);
+       }
+
+    } else if $wv.len() == 1 {
+        let w = $wv[0].0.clone();
+        let tr = $mult * $wv[0].1;
+        $ngrams.insert(w, tr);
+    })
+}
+
+const RM_SYMBOLS: &str = "@#!";
+lazy_static! {
+    static ref RE: regex::Regex = regex::Regex::new(&format!("[{}]", RM_SYMBOLS)).unwrap();
+}
+
+
+#[inline]
+fn normalize(query: &str) -> String {
+    RE.replace_all(query, "").to_string().to_lowercase()
+}
+
+#[inline]
+fn fold_to_ngram(terms: Vec<String>, terms_relevance: &HashMap<String, f32>) -> (String, f32) {
+    let r = terms
+        .iter()
+        .fold(0.0, |a, t| a + terms_relevance.get(&t.clone()).unwrap());
+    let s: String = terms.into_iter().collect::<Vec<_>>().join(" ");
+
+    (s, r)
+}
+
 fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String, f32> {
     let mut missing: HashSet<String> = HashSet::new();
     let mut terms_rel: HashMap<String, f32> = HashMap::new();
@@ -46,72 +127,6 @@ fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String
     terms_rel
 }
 
-macro_rules! bow_ngrams {
-    ($wv:ident, $ngrams: ident, $mult: ident) => (
-    if $wv.len() > 0 {
-        for i in 0..$wv.len()-1 {
-            let (w1, mut w2) = (&$wv[i].0, &$wv[i+1].0);
-            let mut tr = $mult * ($wv[i].1 + $wv[i+1].1);
-            let mut v = String::with_capacity(w1.len()+w2.len()+1);
-            if w1 < w2 {
-                v.push_str(w1);
-                v.push_str(" ");
-                v.push_str(w2);
-            } else {
-                v.push_str(w2);
-                v.push_str(" ");
-                v.push_str(w1);
-            }
-            $ngrams.insert(v, tr);
-
-            if i < $wv.len()-2 {
-                w2 = &$wv[i+2].0;
-                tr = 0.97 *($wv[i].1 + $wv[i+2].1);
-                v = String::with_capacity(w1.len()+w2.len()+1);
-                if w1 < w2 {
-                    v.push_str(w1);
-                    v.push_str(" ");
-                    v.push_str(w2);
-                } else {
-                    v.push_str(w2);
-                    v.push_str(" ");
-                    v.push_str(w1);
-                }
-                $ngrams.insert(v, tr);
-            }
-        }
-
-       // the first and the last term only for titles (bow, len=4)
-       if $wv.len() > 3 && $mult < 1.0 {
-           let (t1, t2) = (&$wv[0], &$wv[&$wv.len()-1]);
-           let (w1, w2) = (&t1.0, &t2.0);
-           let tr = $mult * (t1.1 + t2.1);
-           let mut v = String::with_capacity(w1.len()+w2.len()+1);
-           if w1 < w2 {
-               v.push_str(w1);
-               v.push_str(" ");
-               v.push_str(w2);
-           } else {
-               v.push_str(w2);
-               v.push_str(" ");
-               v.push_str(w1);
-           }
-           $ngrams.insert(v, tr);
-       }
-
-    })
-}
-
-const RM_SYMBOLS: &str = "@#!";
-lazy_static! {
-    static ref RE: regex::Regex = regex::Regex::new(&format!("[{}]", RM_SYMBOLS)).unwrap();
-}
-
-#[inline]
-fn normalize(query: &str) -> String {
-    RE.replace_all(query, "").to_string().to_lowercase()
-}
-
 pub fn parse(
     query: &str,
     stopwords: &HashSet<String>,
@@ -134,6 +149,13 @@ pub fn parse(
     let mut has_stopword = false;
 
     for w in wvec {
+        // already encountered consecutive 3 stop words, push them to stopwords stack
+        if tempv.len() > 2 {
+            let (s, r) = fold_to_ngram(tempv, &terms_rel);
+            w_stop.push((s, r));
+            tempv = vec![];
+        }
+
         if stopwords.contains(&w) || w.len() < 3 {
             has_stopword = true;
             tempv.push(w.clone());
@@ -145,10 +167,7 @@ pub fn parse(
 
         if has_stopword {
             tempv.push(w.clone());
-            let r = tempv
-                .iter()
-                .fold(0.0, |a, t| a + terms_rel.get(&t.clone()).unwrap());
-            let s: String = tempv.into_iter().collect::<Vec<_>>().join(" ");
+            let (s, r) = fold_to_ngram(tempv, &terms_rel);
             w_stop.push((s, r));
             wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
 
@@ -158,6 +177,12 @@ pub fn parse(
             w_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
             wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
         }
+    }
+
+    // in case query consists of stopwords only
+    if tempv.len() > 0 {
+        let (s, r) = fold_to_ngram(tempv, &terms_rel);
+        w_stop.push((s, r));
     }
 
     let mult = match query_type {
@@ -175,7 +200,6 @@ pub fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::test::Bencher;
 
     #[inline]
     fn normalize_repl() -> String {
@@ -195,5 +219,49 @@ mod tests {
     #[test]
     fn test_string_repl() {
         assert_eq!(&normalize_repl(), "helloworld");
+    }
+
+    #[test]
+    fn test_parse_stopwords_query() {
+        let stopwords: HashSet<String> = [ "und".to_string() ].iter().cloned().collect();
+        let terms_relevance = Map::from_iter(vec![("1", 1), ("und", 1)]).unwrap();
+
+        let mut query = "1 und 1";
+        let expected: HashMap<String, f32> = [("1 und 1".to_string(), 1.0)].iter().cloned().collect();
+        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
+
+        query = "und und";
+        let expected: HashMap<String, f32> = [("und und".to_string(), 1.0)].iter().cloned().collect();
+        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
+
+        query = "1 und 1 und";
+        let expected: HashMap<String, f32> = [
+            ("1 und 1 und".to_string(), 1.0)
+        ].iter().cloned().collect();
+        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
+
+        query = "1 und 1 und 1";
+        let expected: HashMap<String, f32> = [
+            ("1 und 1 und 1".to_string(), 1.0)
+        ].iter().cloned().collect();
+        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
+
+    }
+
+    #[test]
+    fn test_parse_query() {
+        let query = "1 und 1 account login";
+        let stopwords: HashSet<String> = [ "und".to_string() ].iter().cloned().collect();
+        let terms_relevance = Map::from_iter(vec![("1", 1), ("und", 1)]).unwrap();
+
+        let expected: HashMap<String, f32> = [
+            ("account".to_string(), 0.2),
+            ("login".to_string(), 0.2),
+            ("account login".to_string(), 0.4),
+            ("1 und 1 login".to_string(), 0.776),
+            ("1 und 1 account".to_string(), 0.8)
+        ].iter().cloned().collect();
+
+        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
     }
 }
