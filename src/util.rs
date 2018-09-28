@@ -110,6 +110,7 @@ pub fn min<T: PartialOrd>(a: T, b: T) -> T {
 // A Fast, Minimal Memory, Consistent Hash Algorithm by John Lamping and Eric Veach:
 // https://arxiv.org/pdf/1406.2294.pdf
 // It outputs a bucket number in the range [0, num_buckets).
+#[inline]
 pub fn jump_consistent_hash(mut key: u64, num_buckets: u32) -> u32 {
     assert!(num_buckets > 0);
 

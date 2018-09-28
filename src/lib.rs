@@ -136,6 +136,234 @@ impl PartialEq for Sid {
     }
 }
 
+// -- simd
+use std::mem;
+
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+
+#[cfg(target_arch = "x86")]
+use std::arch::x86::*;
+
+#[target_feature(enable = "avx")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+#[allow(unsafe_code)]
+unsafe fn get_query_ids_with_simd(
+    ngrams: &HashMap<String, f32>,
+    map: &fst::Map,
+    ifd: &memmap::Mmap,
+    id_size: usize,
+) -> Result<ShardIds, Error> {
+    // normalization constant for tf-idf score
+    let mut norm: f32 = 0.0;
+    let n = *get_shard_size() as f32;
+    let nr_shards = *get_nr_shards();
+    let bucket_size = *get_bucket_size();
+
+    // total length for ids vector
+    let mut total_len: usize = 0;
+    // collect ngram's term relevance, bucket address, bucket length and idf score
+    // also, compute normalization constant
+    let ntr_addr_len_idf_vec: Vec<(u8, usize, usize, f32)> = ngrams
+        .iter()
+        .map(|(ngram, ngram_tr)| {
+            // IDF score for the ngram
+            let mut idf: f32 = n.log(2.0);
+            let ntr = (*ngram_tr * 100.0).round() as u8;
+            let (addr, len) = match get_addr_and_len(ngram, &map) {
+                // returns physical memory address and length of the vector (not a number of bytes)
+                Some((addr, len)) => {
+                    total_len += len as usize;
+                    // IDF for existing ngram
+                    idf = (n / len as f32).log(2.0);
+                    (addr as usize, util::min(len as usize, bucket_size))
+                }
+                None => {
+                    // IDF ngram that occurs for the 1st time
+                    (0, 0)
+                }
+            };
+            // normalization update
+            norm += ngram_tr * idf;
+            (ntr, addr, len, idf)
+        })
+        .collect::<Vec<(u8, usize, usize, f32)>>();
+
+    // allocate ids vector with exact (total_len) capacity
+    let mut ids: Vec<Sid> = Vec::with_capacity(total_len);
+    ids.reserve_exact(total_len);
+
+    // -- start simd tf-idf calculation for each id
+    let _add_1 = _mm256_set1_ps(1.0);
+    let _div_100 = _mm256_set1_ps(100.0);
+    let _div_1000 = _mm256_set1_ps(1000.0);
+
+    for (ntr, addr, len, idf) in ntr_addr_len_idf_vec {
+        if len == 0 {
+            continue;
+        }
+        let mem_addr = addr as usize * id_size;
+        let mut ids_arr: &[(u32, u8, u8, u8)] = &read_bucket(ifd, mem_addr, len, id_size)[..len];
+
+        let _idf8 = _mm256_set1_ps(idf);
+
+        while ids_arr.len() >= 8 {
+            let (
+                (pqid0, rem0, trel0, freq0),
+                (pqid1, rem1, trel1, freq1),
+                (pqid2, rem2, trel2, freq2),
+                (pqid3, rem3, trel3, freq3),
+                (pqid4, rem4, trel4, freq4),
+                (pqid5, rem5, trel5, freq5),
+                (pqid6, rem6, trel6, freq6),
+                (pqid7, rem7, trel7, freq7),
+            ) = (
+                ids_arr[0],
+                ids_arr[1],
+                ids_arr[2],
+                ids_arr[3],
+                ids_arr[4],
+                ids_arr[5],
+                ids_arr[6],
+                ids_arr[7],
+            );
+
+            let _trel = _mm256_div_ps(
+                _mm256_set_ps(
+                    util::min(trel0, ntr) as f32,
+                    util::min(trel1, ntr) as f32,
+                    util::min(trel2, ntr) as f32,
+                    util::min(trel3, ntr) as f32,
+                    util::min(trel4, ntr) as f32,
+                    util::min(trel5, ntr) as f32,
+                    util::min(trel6, ntr) as f32,
+                    util::min(trel7, ntr) as f32,
+                ),
+                _div_100,
+            );
+
+            let _freq = _mm256_add_ps(
+                _add_1,
+                _mm256_div_ps(
+                    _mm256_set_ps(
+                        freq0 as f32,
+                        freq1 as f32,
+                        freq2 as f32,
+                        freq3 as f32,
+                        freq4 as f32,
+                        freq5 as f32,
+                        freq6 as f32,
+                        freq7 as f32,
+                    ),
+                    _div_1000,
+                ),
+            );
+
+            let tf_idf: (f32, f32, f32, f32, f32, f32, f32, f32) =
+                mem::transmute(_mm256_mul_ps(_mm256_mul_ps(_trel, _freq), _idf8));
+
+            ids.extend_from_slice(&[
+                Sid {
+                    id: util::pqid2qid(pqid0 as u64, rem0, nr_shards),
+                    sc: tf_idf.0,
+                },
+                Sid {
+                    id: util::pqid2qid(pqid1 as u64, rem1, nr_shards),
+                    sc: tf_idf.1,
+                },
+                Sid {
+                    id: util::pqid2qid(pqid2 as u64, rem2, nr_shards),
+                    sc: tf_idf.2,
+                },
+                Sid {
+                    id: util::pqid2qid(pqid3 as u64, rem3, nr_shards),
+                    sc: tf_idf.3,
+                },
+                Sid {
+                    id: util::pqid2qid(pqid4 as u64, rem4, nr_shards),
+                    sc: tf_idf.4,
+                },
+                Sid {
+                    id: util::pqid2qid(pqid5 as u64, rem5, nr_shards),
+                    sc: tf_idf.5,
+                },
+                Sid {
+                    id: util::pqid2qid(pqid6 as u64, rem6, nr_shards),
+                    sc: tf_idf.6,
+                },
+                Sid {
+                    id: util::pqid2qid(pqid7 as u64, rem7, nr_shards),
+                    sc: tf_idf.7,
+                },
+            ]);
+
+            ids_arr = &ids_arr[8..];
+        }
+        // compute tf-idf for remining ids if any
+        for &(pqid, rem, trel, freq) in ids_arr.iter() {
+            let tr = util::min(trel, ntr) as f32 / 100.0;
+            let tf = tr * (1.0 + freq as f32 / 1000.0);
+            ids.push(Sid {
+                id: util::pqid2qid(pqid as u64, rem, nr_shards),
+                sc: tf * idf,
+            });
+        }
+    }
+    // -- end simd
+
+    Ok(ShardIds {
+        ids: ids,
+        norm: norm,
+    })
+}
+
+#[inline]
+fn get_query_ids_wo_simd(
+    ngrams: &HashMap<String, f32>,
+    map: &fst::Map,
+    ifd: &memmap::Mmap,
+    id_size: usize,
+) -> Result<ShardIds, Error> {
+    let n = *get_shard_size() as f32;
+    let nr_shards = *get_nr_shards();
+    let bucket_size = *get_bucket_size();
+
+    let mut norm: f32 = 0.0;
+    let mut ids: Vec<Sid> = vec![];
+    for (ngram, ntr) in ngrams {
+        // IDF score for the ngram
+        let mut idf: f32;
+        match get_addr_and_len(ngram, &map) {
+            // returns physical memory address and length of the vector (not a number of bytes)
+            Some((addr, len)) => {
+                // IDF for existing ngram
+                idf = (n / len as f32).log(2.0);
+                let mem_addr = addr as usize * id_size;
+                let len = util::min(len as usize, bucket_size);
+                for &(pqid, rem, trel, freq) in read_bucket(ifd, mem_addr, len, id_size).iter() {
+                    let tr = util::min((trel as f32) / 100.0, *ntr);
+                    let tf = tr * (1.0 + freq as f32 / 1000.0);
+                    ids.push(Sid {
+                        id: util::pqid2qid(pqid as u64, rem, nr_shards),
+                        sc: tf * idf,
+                    });
+                }
+            }
+            None => {
+                // IDF ngram that occurs for the 1st time
+                idf = n.log(2.0);
+            }
+        }
+        // normalization score
+        norm += ntr * idf;
+    }
+    Ok(ShardIds {
+        ids: ids,
+        norm: norm,
+    })
+}
+
 #[inline]
 fn get_query_ids(
     ngrams: &HashMap<String, f32>,
@@ -143,43 +371,11 @@ fn get_query_ids(
     ifd: &memmap::Mmap,
     id_size: usize,
 ) -> Result<ShardIds, Error> {
-    let mut _norm: f32 = 0.0;
-    let mut _ids: Vec<Sid> = vec![];
-    let n = *get_shard_size() as f32;
-    let nr_shards = *get_nr_shards();
-    let bucket_size = *get_bucket_size();
-    for (ngram, ntr) in ngrams {
-        // IDF score for the ngram
-        let mut _idf: f32 = 0.0;
-        match get_addr_and_len(ngram, &map) {
-            // returns physical memory address and length of the vector (not a number of bytes)
-            Some((addr, len)) => {
-                // IDF for existing ngram
-                _idf = (n / len as f32).log(2.0);
-                let mem_addr = addr as usize * id_size;
-                let len = util::min(len as usize, bucket_size);
-                for &(pqid, rem, trel, freq) in read_bucket(ifd, mem_addr, len, id_size).iter() {
-                    let tr = util::min((trel as f32) / 100.0, *ntr);
-                    let tf = tr * (1.0 + freq as f32 / 1000.0);
-                    _ids.push(Sid {
-                        id: util::pqid2qid(pqid as u64, rem, nr_shards),
-                        sc: tf * _idf,
-                    });
-                }
-            }
-            None => {
-                // IDF ngram that occurs for the 1st time
-                _idf = n.log(2.0);
-            }
-        }
-        // normalization score
-        _norm += ntr * _idf;
+    if cfg!(target_feature = "avx") {
+        unsafe { get_query_ids_with_simd(ngrams, map, ifd, id_size) }
+    } else {
+        get_query_ids_wo_simd(ngrams, map, ifd, id_size)
     }
-
-    Ok(ShardIds {
-        ids: _ids,
-        norm: _norm,
-    })
 }
 
 pub struct Qpick {
