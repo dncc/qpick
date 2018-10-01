@@ -55,29 +55,30 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use rayon::ThreadPoolBuilder;
 
-make_static_var_and_getter!(get_id_size, ID_SIZE, usize);
 make_static_var_and_getter!(get_bucket_size, BUCKET_SIZE, usize);
 make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
 make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
 make_static_var_and_getter!(get_thread_pool_size, THREAD_POOL_SIZE, usize);
 
-fn read_bucket(mmap: &memmap::Mmap, addr: usize, len: usize) -> Vec<(u32, u8, u8, u8)> {
-    let id_size = get_id_size();
-    let vlen = util::min(len, *get_bucket_size());
-    let buf = &mmap[addr..addr + vlen * id_size];
-    let mut vector = Vec::<(u32, u8, u8, u8)>::with_capacity(vlen);
-
-    for i in 0..vlen {
-        let j = i * id_size;
-        vector.push((
-            LittleEndian::read_u32(&buf[j..j + 4]),
-            buf[j + 4],
-            buf[j + 5],
-            buf[j + 6],
-        ));
-    }
-
-    vector
+#[inline]
+fn read_bucket(
+    mmap: &memmap::Mmap,
+    addr: usize,
+    len: usize,
+    id_size: usize,
+) -> Vec<(u32, u8, u8, u8)> {
+    let buf = &mmap[addr..addr + len * id_size];
+    (0..len)
+        .map(|i| {
+            let j = i * id_size;
+            (
+                LittleEndian::read_u32(&buf[j..j + 4]),
+                buf[j + 4],
+                buf[j + 5],
+                buf[j + 6],
+            )
+        })
+        .collect::<Vec<(u32, u8, u8, u8)>>()
 }
 
 // reading part
@@ -135,53 +136,48 @@ impl PartialEq for Sid {
     }
 }
 
+#[inline]
 fn get_query_ids(
     ngrams: &HashMap<String, f32>,
     map: &fst::Map,
     ifd: &memmap::Mmap,
+    id_size: usize,
 ) -> Result<ShardIds, Error> {
-    let mut _ids = HashMap::new();
     let mut _norm: f32 = 0.0;
-    let id_size = *get_id_size();
+    let mut _ids: Vec<Sid> = vec![];
     let n = *get_shard_size() as f32;
+    let nr_shards = *get_nr_shards();
+    let bucket_size = *get_bucket_size();
     for (ngram, ntr) in ngrams {
         // IDF score for the ngram
         let mut _idf: f32 = 0.0;
-
         match get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
             Some((addr, len)) => {
-                for pqid_rem_tr_f in read_bucket(ifd, addr as usize * id_size, len as usize).iter()
-                {
-                    let pqid = pqid_rem_tr_f.0;
-                    let reminder = pqid_rem_tr_f.1;
-                    let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
-                    // TODO cosine similarity, normalize ngrams relevance at indexing time
-                    let f = pqid_rem_tr_f.3;
-                    let mut tr = (pqid_rem_tr_f.2 as f32) / 100.0;
-                    let weight = util::min(tr, *ntr) * (1.0 + f as f32 / 1000.0);
-                    *_ids.entry(qid).or_insert(0.0) += weight * (n / len as f32).log(2.0);
-                }
-
                 // IDF for existing ngram
                 _idf = (n / len as f32).log(2.0);
+                let mem_addr = addr as usize * id_size;
+                let len = util::min(len as usize, bucket_size);
+                for &(pqid, rem, trel, freq) in read_bucket(ifd, mem_addr, len, id_size).iter() {
+                    let tr = util::min((trel as f32) / 100.0, *ntr);
+                    let tf = tr * (1.0 + freq as f32 / 1000.0);
+                    _ids.push(Sid {
+                        id: util::pqid2qid(pqid as u64, rem, nr_shards),
+                        sc: tf * _idf,
+                    });
+                }
             }
             None => {
-                // IDF for non existing ngram, occurs for the 1st time
+                // IDF ngram that occurs for the 1st time
                 _idf = n.log(2.0);
             }
         }
-        // compute the normalization score
+        // normalization score
         _norm += ntr * _idf;
     }
 
-    let mut v: Vec<Sid> = _ids.iter()
-        .map(|(id, sc)| Sid { id: *id, sc: *sc })
-        .collect::<Vec<_>>();
-    v.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse());
-
     Ok(ShardIds {
-        ids: v,
+        ids: _ids,
         norm: _norm,
     })
 }
@@ -193,6 +189,7 @@ pub struct Qpick {
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
     shard_range: Range<u32>,
+    id_size: usize,
 }
 
 pub struct Shard {
@@ -220,11 +217,10 @@ impl QpickResults {
 impl Qpick {
     fn new(path: String, shard_range_opt: Option<Range<u32>>) -> Qpick {
         let c = config::Config::init(path.clone());
-
+        let id_size = c.id_size;
         unsafe {
             // TODO set up globals, later should be available via self.config
             NR_SHARDS = Some(c.nr_shards);
-            ID_SIZE = Some(c.id_size);
             BUCKET_SIZE = Some(c.bucket_size);
             SHARD_SIZE = Some(c.shard_size);
             THREAD_POOL_SIZE = Some(c.thread_pool_size);
@@ -304,6 +300,7 @@ impl Qpick {
             terms_relevance: terms_relevance,
             shards: Arc::new(shards),
             shard_range: shard_range,
+            id_size: id_size,
         }
     }
 
@@ -337,17 +334,18 @@ impl Qpick {
 
         let shard_ids: Vec<ShardIds> = shards_ngrams
             .par_iter()
-            .map(|sh_ng| {
+            .map(|(shard_id, ngrams)| {
                 get_query_ids(
-                    &sh_ng.1,
-                    &self.shards[*sh_ng.0].map,
-                    &self.shards[*sh_ng.0].shard,
+                    ngrams,
+                    &self.shards[*shard_id].map,
+                    &self.shards[*shard_id].shard,
+                    self.id_size,
                 ).unwrap()
             })
             .collect();
 
-        let mut hdata: HashMap<u64, f32> = HashMap::new();
         let mut norm: f32 = 0.0;
+        let mut hdata: HashMap<u64, f32> = HashMap::new();
         for sh_id in shard_ids.iter() {
             for s in sh_id.ids.iter() {
                 *hdata.entry(s.id).or_insert(0.0) += s.sc;

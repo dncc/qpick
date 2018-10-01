@@ -40,12 +40,11 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
             assert!(end_shard > start_shard);
             qpick = qpick::Qpick::from_path_with_shard_range(
                 "./index".to_string(),
-                (start_shard..end_shard),
+                start_shard..end_shard,
             );
         } else {
             panic!("Missing the end shard value! Run --help for more info!")
         }
-
     } else {
         qpick = qpick::Qpick::from_path("./index".to_string());
     }
