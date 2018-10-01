@@ -5,8 +5,8 @@ extern crate fst;
 extern crate libc;
 #[macro_use]
 extern crate serde_derive;
-extern crate serde_json;
 extern crate memmap;
+extern crate serde_json;
 
 use std::io;
 use std::sync::Arc;
@@ -33,26 +33,27 @@ pub mod stopwords;
 
 use shard::QueryType;
 
-use util::{BYELL, ECOL, BRED};
+use util::{BRED, BYELL, ECOL};
 
 macro_rules! make_static_var_and_getter {
-    ($fn_name:ident, $var_name:ident, $t:ty) => (
-    static mut $var_name: Option<$t> = None;
-    #[inline]
-    fn $fn_name() -> &'static $t {
-        unsafe {
-            match $var_name {
-                Some(ref n) => n,
-                None => std::process::exit(1),
+    ($fn_name: ident, $var_name: ident, $t: ty) => {
+        static mut $var_name: Option<$t> = None;
+        #[inline]
+        fn $fn_name() -> &'static $t {
+            unsafe {
+                match $var_name {
+                    Some(ref n) => n,
+                    None => std::process::exit(1),
+                }
             }
-       }
-    })
+        }
+    };
 }
 
 extern crate rayon;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use rayon::{ThreadPoolBuilder};
+use rayon::ThreadPoolBuilder;
 
 make_static_var_and_getter!(get_id_size, ID_SIZE, usize);
 make_static_var_and_getter!(get_bucket_size, BUCKET_SIZE, usize);
@@ -150,7 +151,8 @@ fn get_query_ids(
         match get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
             Some((addr, len)) => {
-                for pqid_rem_tr_f in read_bucket(ifd, addr as usize * id_size, len as usize).iter() {
+                for pqid_rem_tr_f in read_bucket(ifd, addr as usize * id_size, len as usize).iter()
+                {
                     let pqid = pqid_rem_tr_f.0;
                     let reminder = pqid_rem_tr_f.1;
                     let qid = util::pqid2qid(pqid as u64, reminder, *get_nr_shards());
@@ -233,27 +235,31 @@ impl Qpick {
         let stopwords_path = &format!("{}/{}", path, c.stopwords_file);
         let stopwords = match stopwords::load(stopwords_path) {
             Ok(stopwords) => stopwords,
-            Err(_) => panic!([
-                BYELL,
-                "No such file or directory: ",
-                ECOL,
-                BRED,
-                stopwords_path,
-                ECOL
-            ].join("")),
+            Err(_) => panic!(
+                [
+                    BYELL,
+                    "No such file or directory: ",
+                    ECOL,
+                    BRED,
+                    stopwords_path,
+                    ECOL
+                ].join("")
+            ),
         };
 
         let terms_relevance_path = &format!("{}/{}", path, c.terms_relevance_file);
         let terms_relevance = match Map::from_path(terms_relevance_path) {
             Ok(terms_relevance) => terms_relevance,
-            Err(_) => panic!([
-                BYELL,
-                "No such file or directory: ",
-                ECOL,
-                BRED,
-                terms_relevance_path,
-                ECOL
-            ].join("")),
+            Err(_) => panic!(
+                [
+                    BYELL,
+                    "No such file or directory: ",
+                    ECOL,
+                    BRED,
+                    terms_relevance_path,
+                    ECOL
+                ].join("")
+            ),
         };
 
         let mut shards = vec![];
@@ -263,8 +269,7 @@ impl Qpick {
             // advice OS on random access to the map file and create Fst object from it
             let map_file = MmapReadOnly::open_path(&map_path).unwrap();
             unsafe {
-                advise_ram(map_file.as_slice())
-                    .expect(&format!("Advisory failed for map {}", i))
+                advise_ram(map_file.as_slice()).expect(&format!("Advisory failed for map {}", i))
             };
             let map = match Fst::from_mmap(map_file) {
                 Ok(fst) => Map::from(fst),
@@ -272,12 +277,11 @@ impl Qpick {
             };
 
             let shard = unsafe {
-                Mmap::map(
-                &OpenOptions::new()
+                Mmap::map(&OpenOptions::new()
                     .read(true)
                     .open(format!("{}/shard.{}", path, i))
+                    .unwrap())
                     .unwrap()
-                ).unwrap()
             };
 
             advise_ram(&shard[..]).expect(&format!("Advisory failed for shard {}", i));
@@ -316,7 +320,6 @@ impl Qpick {
         ngrams: &HashMap<String, f32>,
         count: Option<usize>,
     ) -> Result<Vec<Sid>, Error> {
-
         let ref mut shards_ngrams: HashMap<usize, HashMap<String, f32>> = HashMap::new();
 
         for (ngram, sc) in ngrams {
@@ -354,11 +357,9 @@ impl Qpick {
 
         let mut vdata: Vec<Sid> = hdata
             .par_iter()
-            .map(|(id, sc)| {
-                Sid {
-                    id: *id,
-                    sc: *sc / norm,
-                }
+            .map(|(id, sc)| Sid {
+                id: *id,
+                sc: *sc / norm,
             })
             .collect();
         vdata.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse());
@@ -443,9 +444,7 @@ impl Qpick {
     ) -> Result<(), std::io::Error> {
         println!(
             "Creating {:?} shards from {:?} to {:?}",
-            nr_shards,
-            file_path,
-            output_dir
+            nr_shards, file_path, output_dir
         );
         shard::shard(&file_path, nr_shards, &output_dir, concurrency)
     }

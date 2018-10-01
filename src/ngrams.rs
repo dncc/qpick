@@ -8,27 +8,46 @@ use std::collections::HashSet;
 use shard::QueryType;
 
 macro_rules! bow_ngrams {
-    ($wv:ident, $ngrams: ident, $mult: ident) => (
-    if $wv.len() > 1 {
-        for i in 0..$wv.len()-1 {
-            let (w1, mut w2) = (&$wv[i].0, &$wv[i+1].0);
-            let mut tr = $mult * ($wv[i].1 + $wv[i+1].1);
-            let mut v = String::with_capacity(w1.len()+w2.len()+1);
-            if w1 < w2 {
-                v.push_str(w1);
-                v.push_str(" ");
-                v.push_str(w2);
-            } else {
-                v.push_str(w2);
-                v.push_str(" ");
-                v.push_str(w1);
-            }
-            $ngrams.insert(v, tr);
+    ($wv: ident, $ngrams: ident, $mult: ident) => {
+        if $wv.len() > 1 {
+            for i in 0..$wv.len() - 1 {
+                let (w1, mut w2) = (&$wv[i].0, &$wv[i + 1].0);
+                let mut tr = $mult * ($wv[i].1 + $wv[i + 1].1);
+                let mut v = String::with_capacity(w1.len() + w2.len() + 1);
+                if w1 < w2 {
+                    v.push_str(w1);
+                    v.push_str(" ");
+                    v.push_str(w2);
+                } else {
+                    v.push_str(w2);
+                    v.push_str(" ");
+                    v.push_str(w1);
+                }
+                $ngrams.insert(v, tr);
 
-            if i < $wv.len()-2 {
-                w2 = &$wv[i+2].0;
-                tr = 0.97 *($wv[i].1 + $wv[i+2].1);
-                v = String::with_capacity(w1.len()+w2.len()+1);
+                if i < $wv.len() - 2 {
+                    w2 = &$wv[i + 2].0;
+                    tr = 0.97 * ($wv[i].1 + $wv[i + 2].1);
+                    v = String::with_capacity(w1.len() + w2.len() + 1);
+                    if w1 < w2 {
+                        v.push_str(w1);
+                        v.push_str(" ");
+                        v.push_str(w2);
+                    } else {
+                        v.push_str(w2);
+                        v.push_str(" ");
+                        v.push_str(w1);
+                    }
+                    $ngrams.insert(v, tr);
+                }
+            }
+
+            // the first and the last term only for titles (bow, len=4)
+            if $wv.len() > 3 && $mult < 1.0 {
+                let (t1, t2) = (&$wv[0], &$wv[&$wv.len() - 1]);
+                let (w1, w2) = (&t1.0, &t2.0);
+                let tr = $mult * (t1.1 + t2.1);
+                let mut v = String::with_capacity(w1.len() + w2.len() + 1);
                 if w1 < w2 {
                     v.push_str(w1);
                     v.push_str(" ");
@@ -40,38 +59,18 @@ macro_rules! bow_ngrams {
                 }
                 $ngrams.insert(v, tr);
             }
-       }
-
-       // the first and the last term only for titles (bow, len=4)
-       if $wv.len() > 3 && $mult < 1.0 {
-           let (t1, t2) = (&$wv[0], &$wv[&$wv.len()-1]);
-           let (w1, w2) = (&t1.0, &t2.0);
-           let tr = $mult * (t1.1 + t2.1);
-           let mut v = String::with_capacity(w1.len()+w2.len()+1);
-           if w1 < w2 {
-               v.push_str(w1);
-               v.push_str(" ");
-               v.push_str(w2);
-           } else {
-               v.push_str(w2);
-               v.push_str(" ");
-               v.push_str(w1);
-           }
-           $ngrams.insert(v, tr);
-       }
-
-    } else if $wv.len() == 1 {
-        let w = $wv[0].0.clone();
-        let tr = $mult * $wv[0].1;
-        $ngrams.insert(w, tr);
-    })
+        } else if $wv.len() == 1 {
+            let w = $wv[0].0.clone();
+            let tr = $mult * $wv[0].1;
+            $ngrams.insert(w, tr);
+        }
+    };
 }
 
 const RM_SYMBOLS: &str = "@#!";
 lazy_static! {
     static ref RE: regex::Regex = regex::Regex::new(&format!("[{}]", RM_SYMBOLS)).unwrap();
 }
-
 
 #[inline]
 fn normalize(query: &str) -> String {
@@ -223,35 +222,48 @@ mod tests {
 
     #[test]
     fn test_parse_stopwords_query() {
-        let stopwords: HashSet<String> = [ "und".to_string() ].iter().cloned().collect();
+        let stopwords: HashSet<String> = ["und".to_string()].iter().cloned().collect();
         let terms_relevance = Map::from_iter(vec![("1", 1), ("und", 1)]).unwrap();
 
         let mut query = "1 und 1";
-        let expected: HashMap<String, f32> = [("1 und 1".to_string(), 1.0)].iter().cloned().collect();
-        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
+        let expected: HashMap<String, f32> =
+            [("1 und 1".to_string(), 1.0)].iter().cloned().collect();
+        assert_eq!(
+            parse(query, &stopwords, &terms_relevance, QueryType::Q),
+            expected
+        );
 
         query = "und und";
-        let expected: HashMap<String, f32> = [("und und".to_string(), 1.0)].iter().cloned().collect();
-        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
+        let expected: HashMap<String, f32> =
+            [("und und".to_string(), 1.0)].iter().cloned().collect();
+        assert_eq!(
+            parse(query, &stopwords, &terms_relevance, QueryType::Q),
+            expected
+        );
 
         query = "1 und 1 und";
-        let expected: HashMap<String, f32> = [
-            ("1 und 1 und".to_string(), 1.0)
-        ].iter().cloned().collect();
-        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
+        let expected: HashMap<String, f32> =
+            [("1 und 1 und".to_string(), 1.0)].iter().cloned().collect();
+        assert_eq!(
+            parse(query, &stopwords, &terms_relevance, QueryType::Q),
+            expected
+        );
 
         query = "1 und 1 und 1";
-        let expected: HashMap<String, f32> = [
-            ("1 und 1 und 1".to_string(), 1.0)
-        ].iter().cloned().collect();
-        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
-
+        let expected: HashMap<String, f32> = [("1 und 1 und 1".to_string(), 1.0)]
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(
+            parse(query, &stopwords, &terms_relevance, QueryType::Q),
+            expected
+        );
     }
 
     #[test]
     fn test_parse_query() {
         let query = "1 und 1 account login";
-        let stopwords: HashSet<String> = [ "und".to_string() ].iter().cloned().collect();
+        let stopwords: HashSet<String> = ["und".to_string()].iter().cloned().collect();
         let terms_relevance = Map::from_iter(vec![("1", 1), ("und", 1)]).unwrap();
 
         let expected: HashMap<String, f32> = [
@@ -259,9 +271,14 @@ mod tests {
             ("login".to_string(), 0.2),
             ("account login".to_string(), 0.4),
             ("1 und 1 login".to_string(), 0.776),
-            ("1 und 1 account".to_string(), 0.8)
-        ].iter().cloned().collect();
+            ("1 und 1 account".to_string(), 0.8),
+        ].iter()
+            .cloned()
+            .collect();
 
-        assert_eq!(parse(query, &stopwords, &terms_relevance, QueryType::Q), expected);
+        assert_eq!(
+            parse(query, &stopwords, &terms_relevance, QueryType::Q),
+            expected
+        );
     }
 }

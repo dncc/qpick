@@ -189,9 +189,7 @@ pub fn build_shard(
                 Err(err) => {
                     println!(
                         "Shard {:?} - failed to parse query id {:?}: {:?}",
-                        iid,
-                        pqid,
-                        err
+                        iid, pqid, err
                     );
                     continue;
                 }
@@ -208,9 +206,7 @@ pub fn build_shard(
                 Err(err) => {
                     println!(
                         "Shard {:?} - failed to parse query id {:?}: {:?}",
-                        iid,
-                        pqid,
-                        err
+                        iid, pqid, err
                     );
                     continue;
                 }
@@ -235,9 +231,7 @@ pub fn build_shard(
                 Err(err) => {
                     println!(
                         "Shard {:?} - failed to parse ngram score {:?}: {:?}",
-                        iid,
-                        nsc,
-                        err
+                        iid, nsc, err
                     );
                     continue;
                 }
@@ -254,9 +248,7 @@ pub fn build_shard(
                 Err(err) => {
                     println!(
                         "Shard {:?} - failed to parse ngram score {:?}: {:?}",
-                        iid,
-                        f,
-                        err
+                        iid, f, err
                     );
                     continue;
                 }

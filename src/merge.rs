@@ -39,9 +39,10 @@ pub fn merge(dir_path: &str, nr_shards: usize) -> Result<(), Error> {
     }
     let mut union = fsts.iter().collect::<raw::OpBuilder>().union();
 
-    let wtr = BufWriter::new(try!(File::create(
-        format!("{}/union_map.{}.fst", dir_path, nr_shards)
-    )));
+    let wtr = BufWriter::new(try!(File::create(format!(
+        "{}/union_map.{}.fst",
+        dir_path, nr_shards
+    ))));
     let mut builder = try!(raw::Builder::new(wtr));
 
     let mut count: u64 = 0;

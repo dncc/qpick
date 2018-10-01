@@ -7,7 +7,7 @@ use fst::Map;
 use std::fs::OpenOptions;
 
 use util;
-use util::{BYELL, ECOL, BRED};
+use util::{BRED, BYELL, ECOL};
 use config;
 use stopwords;
 use ngrams;
@@ -59,7 +59,6 @@ impl From<String> for QueryType {
     }
 }
 
-
 pub fn shard(
     file_path: &str,
     nr_shards: usize,
@@ -79,14 +78,16 @@ pub fn shard(
     let stopwords_path = &format!("{}/{}", output_dir, c.stopwords_file);
     let stopwords = match stopwords::load(stopwords_path) {
         Ok(stopwords) => stopwords,
-        Err(_) => panic!([
-            BYELL,
-            "No such file or directory: ",
-            ECOL,
-            BRED,
-            stopwords_path,
-            ECOL
-        ].join("")),
+        Err(_) => panic!(
+            [
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                stopwords_path,
+                ECOL
+            ].join("")
+        ),
     };
 
     let (sender, receiver): (Sender<u64>, Receiver<u64>) = mpsc::channel();
@@ -112,14 +113,16 @@ pub fn shard(
         let terms_relevance_path = &format!("{}/{}", output_dir, c.terms_relevance_file);
         let tr_map = match Map::from_path(terms_relevance_path) {
             Ok(tr_map) => tr_map,
-            Err(_) => panic!([
-                BYELL,
-                "No such file or directory: ",
-                ECOL,
-                BRED,
-                terms_relevance_path,
-                ECOL
-            ].join("")),
+            Err(_) => panic!(
+                [
+                    BYELL,
+                    "No such file or directory: ",
+                    ECOL,
+                    BRED,
+                    terms_relevance_path,
+                    ECOL
+                ].join("")
+            ),
         };
 
         let f = try!(File::open(file_path));
