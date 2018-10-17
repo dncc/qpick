@@ -55,6 +55,8 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use rayon::ThreadPoolBuilder;
 
+pub const LOW_SIM_THRESH: f32 = 0.099; // take only queries with similarity above
+
 make_static_var_and_getter!(get_bucket_size, BUCKET_SIZE, usize);
 make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
 make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
@@ -207,7 +209,6 @@ unsafe fn get_query_ids_with_simd(
         let mut ids_arr: &[(u32, u8, u8, u8)] = &read_bucket(ifd, mem_addr, len, id_size)[..len];
 
         let _idf8 = _mm256_set1_ps(idf);
-
         while ids_arr.len() >= 8 {
             let (
                 (pqid0, rem0, trel0, freq0),
@@ -551,6 +552,7 @@ impl Qpick {
 
         let mut vdata: Vec<Sid> = hdata
             .par_iter()
+            .filter(|(_, sc)| *sc / norm > LOW_SIM_THRESH)
             .map(|(id, sc)| Sid {
                 id: *id,
                 sc: *sc / norm,
