@@ -26,18 +26,22 @@ struct Args {
 }
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
-let args: Args = Docopt::new(USAGE)
-    .and_then(|d| d.argv(&argv).deserialize())
-    .unwrap_or_else(|e| e.exit());
+    let args: Args = Docopt::new(USAGE)
+        .and_then(|d| d.argv(&argv).deserialize())
+        .unwrap_or_else(|e| e.exit());
 
     let mut concurrency = args.arg_nr_shards;
     if let Some(c) = args.flag_concurrency {
         concurrency = c as usize;
     }
 
-    let r = qpick::Qpick::shard(args.arg_path, args.arg_nr_shards, args.arg_output_dir, concurrency);
+    let r = qpick::Qpick::shard(
+        args.arg_path,
+        args.arg_nr_shards,
+        args.arg_output_dir,
+        concurrency,
+    );
     println!("{:?}", r);
 
     Ok(())
-
 }

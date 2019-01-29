@@ -27,5 +27,4 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
     println!("{:?}", r);
 
     Ok(())
-
 }

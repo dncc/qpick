@@ -7,28 +7,33 @@ use std::ffi::{CStr, CString};
 
 /// Get an immutable reference from a raw pointer
 macro_rules! ref_from_ptr {
-    ($p:ident) => (unsafe {
-        assert!(!$p.is_null());
-        &*$p
-    })
+    ($p: ident) => {
+        unsafe {
+            assert!(!$p.is_null());
+            &*$p
+        }
+    };
 }
 
 /// Get the object referenced by the raw pointer
 macro_rules! val_from_ptr {
-    ($p:ident) => (unsafe {
-        assert!(!$p.is_null());
-        Box::from_raw($p)
-    })
+    ($p: ident) => {
+        unsafe {
+            assert!(!$p.is_null());
+            Box::from_raw($p)
+        }
+    };
 }
 
 /// Declare a function that frees a struct's memory
 macro_rules! make_free_fn {
-    ($name:ident, $t:ty) => (
-    #[no_mangle]
-    pub extern fn $name(ptr: $t) {
-        assert!(!ptr.is_null());
-        val_from_ptr!(ptr);
-    })
+    ($name: ident, $t: ty) => {
+        #[no_mangle]
+        pub extern "C" fn $name(ptr: $t) {
+            assert!(!ptr.is_null());
+            val_from_ptr!(ptr);
+        }
+    };
 }
 
 pub fn str_to_cstr(string: &str) -> *mut libc::c_char {
@@ -56,14 +61,13 @@ pub extern "C" fn qpick_init(path: *mut libc::c_char) -> *mut Qpick {
 }
 
 #[no_mangle]
-pub extern "C" fn qpick_init_with_shard_range(path: *mut libc::c_char,
-                                         start_shard: libc::uint32_t,
-                                         end_shard: libc::uint32_t) -> *mut Qpick {
+pub extern "C" fn qpick_init_with_shard_range(
+    path: *mut libc::c_char,
+    start_shard: libc::uint32_t,
+    end_shard: libc::uint32_t,
+) -> *mut Qpick {
     let path = cstr_to_str(path);
-    let qpick = Qpick::from_path_with_shard_range(
-        path.to_string(),
-        (start_shard..end_shard),
-    );
+    let qpick = Qpick::from_path_with_shard_range(path.to_string(), (start_shard..end_shard));
     to_raw_ptr(qpick)
 }
 make_free_fn!(qpick_free, *mut Qpick);
@@ -77,8 +81,8 @@ pub extern "C" fn string_free(s: *mut libc::c_char) {
 pub extern "C" fn qpick_get_as_string(
     ptr: *mut Qpick,
     query: *mut libc::c_char,
-    count: libc::uint32_t) -> *const libc::c_char {
-
+    count: libc::uint32_t,
+) -> *const libc::c_char {
     let query = cstr_to_str(query);
     let s = ref_from_ptr!(ptr).get_str(query, count);
     CString::new(s).unwrap().into_raw()
@@ -88,12 +92,22 @@ pub extern "C" fn qpick_get_as_string(
 pub extern "C" fn qpick_nget_as_string(
     ptr: *mut Qpick,
     queries: *mut libc::c_char,
-    count: libc::uint32_t) -> *const libc::c_char {
-
+    count: libc::uint32_t,
+) -> *const libc::c_char {
     let queries = cstr_to_str(queries);
     let s = ref_from_ptr!(ptr).nget_str(queries, count);
 
     CString::new(s).unwrap().into_raw()
+}
+
+// Get a mutable reference from a raw pointer
+macro_rules! mutref_from_ptr {
+    ($p: ident) => {
+        unsafe {
+            assert!(!$p.is_null());
+            &mut *$p
+        }
+    };
 }
 
 // ------ iterators ---
@@ -101,41 +115,38 @@ pub extern "C" fn qpick_nget_as_string(
 #[repr(C)]
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct QpickItem {
+pub struct QpickSearchItem {
     qid: libc::uint64_t,
     sc: libc::c_float, //f32
 }
 
-// Get a mutable reference from a raw pointer
-macro_rules! mutref_from_ptr {
-    ($p:ident) => (unsafe {
-        assert!(!$p.is_null());
-        &mut *$p
-    })
-}
-
 // Declare a function that returns the next item from a qpick vector
 #[no_mangle]
-pub extern fn qpick_iter_next(ptr: *mut qpick::QpickResults) -> *mut QpickItem {
+pub extern "C" fn qpick_search_iter_next(ptr: *mut qpick::SearchResults) -> *mut QpickSearchItem {
     let res = mutref_from_ptr!(ptr);
     // let mut iter = res.items.iter();
     match res.next() {
-        Some(qid_sc) => to_raw_ptr(QpickItem { qid: qid_sc.id, sc: qid_sc.sc }),
-        None         => ::std::ptr::null_mut()
+        Some(qid_sc) => to_raw_ptr(QpickSearchItem {
+            qid: qid_sc.id,
+            sc: qid_sc.sc,
+        }),
+        None => ::std::ptr::null_mut(),
     }
 }
 
-make_free_fn!(qpick_results_free, *mut qpick::QpickResults);
-make_free_fn!(qpick_item_free, *mut QpickItem);
+make_free_fn!(qpick_search_results_free, *mut qpick::SearchResults);
+make_free_fn!(qpick_search_item_free, *mut QpickSearchItem);
+
+// --- end iterators ---
 
 #[no_mangle]
 pub extern "C" fn qpick_get(
     ptr: *mut Qpick,
     query: *mut libc::c_char,
-    count: libc::uint32_t) -> *mut qpick::QpickResults {
-
+    count: libc::uint32_t,
+) -> *mut qpick::SearchResults {
     let query = cstr_to_str(query);
-    let res = ref_from_ptr!(ptr).get_results(query, count);
+    let res = ref_from_ptr!(ptr).get_search_results(query, count);
     to_raw_ptr(res)
 }
 
@@ -157,7 +168,7 @@ pub extern "C" fn query_vec_push(ptr: *mut Vec<String>, query: *mut libc::c_char
 pub extern "C" fn qpick_nget(
     ptr: *mut Qpick,
     queries: *mut Vec<String>,
-    count: libc::uint32_t) -> *mut qpick::QpickResults {
-
-    to_raw_ptr(ref_from_ptr!(ptr).nget_results(ref_from_ptr!(queries), count))
+    count: libc::uint32_t,
+) -> *mut qpick::SearchResults {
+    to_raw_ptr(ref_from_ptr!(ptr).nget_search_results(ref_from_ptr!(queries), count))
 }

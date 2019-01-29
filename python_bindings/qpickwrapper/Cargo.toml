@@ -1,7 +1,7 @@
 [package]
 
 name = "qpickwrapper"
-version = "0.2.0"
+version = "0.5.0"
 authors = ["Dragan Cvetinovic <dcvetinovic@gmail.com>"]
 
 [lib]
@@ -10,4 +10,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 libc = "0.2"
-qpick = { path = "../..", version = "0.4.0" }
+qpick = { path = "../..", version = "0.5.0" }

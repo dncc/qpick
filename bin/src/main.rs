@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-extern crate fst;
 extern crate docopt;
+extern crate fst;
 extern crate qpick;
 extern crate serde;
 #[macro_use]
@@ -42,6 +42,7 @@ enum Command {
     Shard,
     Index,
     Merge,
+    Dists,
 }
 
 impl Command {
@@ -50,20 +51,18 @@ impl Command {
 
         let argv: Vec<String> = env::args().collect();
         match self {
-            // Index => cmd::index::run(argv),
             Get => cmd::get::run(argv),
             Shard => cmd::shard::run(argv),
             Index => cmd::index::run(argv),
             Merge => cmd::merge::run(argv),
+            Dists => cmd::dists::run(argv),
         }
     }
 }
 
 fn main() {
     let args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.options_first(true)
-                  .version(Some(version()))
-                  .deserialize())
+        .and_then(|d| d.options_first(true).version(Some(version())).deserialize())
         .unwrap_or_else(|e| e.exit());
 
     let cmd = args.arg_command.expect("BUG: expected a command");
@@ -80,8 +79,7 @@ fn version() -> String {
         option_env!("CARGO_PKG_VERSION_PATCH"),
     );
     match (maj, min, pat) {
-        (Some(maj), Some(min), Some(pat)) =>
-            format!("{}.{}.{}", maj, min, pat),
+        (Some(maj), Some(min), Some(pat)) => format!("{}.{}.{}", maj, min, pat),
         _ => "N/A".to_owned(),
     }
 }

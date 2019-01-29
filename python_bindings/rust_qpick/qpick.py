@@ -1,10 +1,11 @@
 import os
 from .lib import ffi, lib
 
-class QpickResultsIterator(object):
-    def __init__(self, ptr, next_fn, free_fn, autom_ptr=None,
+class QpickResults(object):
+    def __init__(self, ptr, next_fn, free_fn, free_item_fn, autom_ptr=None,
                  autom_free_fn=None):
         self._free_fn = free_fn
+        self._free_item_fn = free_item_fn
         self._ptr = ffi.gc(ptr, free_fn)
 
         self._next_fn = next_fn
@@ -18,7 +19,6 @@ class QpickResultsIterator(object):
         # TODO: We could safely free the structures before the GC does,
         #       but unfortunately removing GC-callbacks is only supported
         #       in cffi >= 1.7, which is not yet released.
-
         # self._free_fn(self._ptr)
         # # Clear GC hook to prevent double-free
         # ffi.gc(self._ptr, None)
@@ -34,6 +34,10 @@ class QpickResultsIterator(object):
         return self.__next__()
 
     def __next__(self):
+        raise NotImplementedError
+
+class QpickSearchResults(QpickResults):
+    def __next__(self):
         itm = self._next_fn(self._ptr)
         if itm == ffi.NULL:
             self._free()
@@ -41,8 +45,22 @@ class QpickResultsIterator(object):
 
         qid = itm.qid
         sc = itm.sc
-        lib.qpick_item_free(itm)
+        self._free_item_fn(itm)
+
         return (qid, sc)
+
+class QpickDistResults(QpickResults):
+    def __next__(self):
+        itm = self._next_fn(self._ptr)
+        if itm == ffi.NULL:
+            self._free()
+            raise StopIteration
+
+        query = ffi.string(itm.query).decode('utf8')
+        dist = itm.dist
+        self._free_item_fn(itm)
+
+        return (query, dist)
 
 
 class Qpick(object):
@@ -83,9 +101,10 @@ class Qpick(object):
     # qpick.get('a')
     def get(self, query, count=100):
         res_ptr = lib.qpick_get(self._ptr, query, count)
-        return QpickResultsIterator(res_ptr,
-                                    lib.qpick_iter_next,
-                                    lib.qpick_results_free)
+        return QpickSearchResults(res_ptr,
+                                lib.qpick_search_iter_next,
+                                lib.qpick_search_results_free,
+                                lib.qpick_search_item_free)
 
     # qpick.nget(['a', 'b', 'c'])
     def nget(self, queries, count=100):
@@ -97,6 +116,22 @@ class Qpick(object):
 
         res_ptr = lib.qpick_nget(self._ptr, qvec_ptr, count)
 
-        return QpickResultsIterator(res_ptr,
-                                    lib.qpick_iter_next,
-                                    lib.qpick_results_free)
+        return QpickSearchResults(res_ptr,
+                                lib.qpick_search_iter_next,
+                                lib.qpick_search_results_free,
+                                lib.qpick_search_item_free)
+
+    # qpick.get_distances('q', ['a', 'b', 'c'])
+    def get_distances(self, query, candidates):
+        qvec = lib.query_vec_init()
+        qvec_ptr = ffi.gc(qvec, lib.query_vec_free)
+
+        for q in candidates:
+            lib.query_vec_push(qvec_ptr, q)
+
+        res_ptr = lib.qpick_get_distances(self._ptr, query, qvec_ptr)
+
+        return QpickDistResults(res_ptr,
+                                lib.qpick_dist_iter_next,
+                                lib.qpick_dist_results_free,
+                                lib.qpick_dist_item_free)
