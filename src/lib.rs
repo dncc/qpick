@@ -610,7 +610,7 @@ impl Qpick {
                 sc: 1.0 - *sc / norm,
             })
             .collect();
-        vdata.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse());
+        vdata.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
         vdata.truncate(count.unwrap_or(100)); //TODO put into config
 
         Ok(vdata)
