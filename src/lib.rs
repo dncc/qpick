@@ -217,14 +217,14 @@ unsafe fn get_query_ids_with_simd(
         let _idf8 = _mm256_set1_ps(idf);
         while ids_arr.len() >= 8 {
             let (
-                (pqid0, rem0, trel0, freq0),
-                (pqid1, rem1, trel1, freq1),
-                (pqid2, rem2, trel2, freq2),
-                (pqid3, rem3, trel3, freq3),
-                (pqid4, rem4, trel4, freq4),
-                (pqid5, rem5, trel5, freq5),
-                (pqid6, rem6, trel6, freq6),
-                (pqid7, rem7, trel7, freq7),
+                (pqid0, rem0, trel0, _freq0),
+                (pqid1, rem1, trel1, _freq1),
+                (pqid2, rem2, trel2, _freq2),
+                (pqid3, rem3, trel3, _freq3),
+                (pqid4, rem4, trel4, _freq4),
+                (pqid5, rem5, trel5, _freq5),
+                (pqid6, rem6, trel6, _freq6),
+                (pqid7, rem7, trel7, _freq7),
             ) = (
                 ids_arr[0],
                 ids_arr[1],
@@ -250,25 +250,8 @@ unsafe fn get_query_ids_with_simd(
                 _div_100,
             );
 
-            let _freq = _mm256_add_ps(
-                _add_1,
-                _mm256_div_ps(
-                    _mm256_set_ps(
-                        freq0 as f32,
-                        freq1 as f32,
-                        freq2 as f32,
-                        freq3 as f32,
-                        freq4 as f32,
-                        freq5 as f32,
-                        freq6 as f32,
-                        freq7 as f32,
-                    ),
-                    _div_1000,
-                ),
-            );
-
             let tf_idf: (f32, f32, f32, f32, f32, f32, f32, f32) =
-                mem::transmute(_mm256_mul_ps(_mm256_mul_ps(_trel, _freq), _idf8));
+                mem::transmute(_mm256_mul_ps(_trel, _idf8));
 
             ids.extend_from_slice(&[
                 SearchResult {
@@ -372,12 +355,12 @@ fn get_query_ids_wo_simd(
                 idf = (n / len as f32).log(2.0);
                 let mem_addr = addr as usize * id_size;
                 let len = util::min(len as usize, bucket_size);
-                for &(pqid, rem, trel, freq) in read_bucket(ifd, mem_addr, len, id_size).iter() {
+                for &(pqid, rem, trel, _freq) in read_bucket(ifd, mem_addr, len, id_size).iter() {
                     let tr = util::min((trel as f32) / 100.0, *ntr);
-                    let tf = tr * (1.0 + freq as f32 / 1000.0);
+                    // let tf = tr * (1.0 + freq as f32 / 1000.0);
                     ids.push(SearchResult {
                         id: util::pqid2qid(pqid as u64, rem, nr_shards),
-                        sc: tf * idf,
+                        sc: tr * idf,
                     });
                 }
             }
@@ -607,7 +590,7 @@ impl Qpick {
             .filter(|(_, sc)| *sc / norm > LOW_SIM_THRESH)
             .map(|(id, sc)| SearchResult {
                 id: *id,
-                sc: 1.0 - *sc / norm,
+                sc: util::max(1.0 - *sc / norm, 0.0),
             })
             .collect();
         vdata.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
@@ -674,7 +657,7 @@ impl Qpick {
                     dist_sim += util::min(ctr, tr) * idf;
                 }
             }
-            let dist = 1.0 - dist_sim / dist_norm;
+            let dist = util::max(1.0 - dist_sim / dist_norm, 0.0);
             dist_results.push(DistanceResult {
                 query: cand_query.to_string(),
                 dist: dist,

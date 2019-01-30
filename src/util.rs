@@ -99,6 +99,15 @@ pub fn elegant_pair_inv(z: u64) -> (u64, u64) {
 }
 
 #[inline]
+pub fn max<T: PartialOrd>(a: T, b: T) -> T {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+#[inline]
 pub fn min<T: PartialOrd>(a: T, b: T) -> T {
     if a < b {
         a
