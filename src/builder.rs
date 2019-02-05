@@ -27,8 +27,6 @@ struct Qid {
     reminder: u8,
     // score: ngram relevance/score for the query
     sc: u8,
-    // frequency: how many times the query has been seen
-    f: u8,
 }
 
 // The priority queue depends on `Ord`. Use a min-heap with max-heap(reverse(qid))
@@ -88,24 +86,23 @@ impl Bucket {
         self.qids.len() as u64
     }
 
-    fn to_vec(self) -> Vec<(u32, u8, u8, u8)> {
+    fn to_vec(self) -> Vec<(u32, u8, u8)> {
         self.qids
             .into_sorted_vec()
             .into_iter()
-            .map(|Reverse(q)| (q.id, q.reminder, q.sc, q.f))
-            .collect::<Vec<(u32, u8, u8, u8)>>()
+            .map(|Reverse(q)| (q.id, q.reminder, q.sc))
+            .collect::<Vec<(u32, u8, u8)>>()
     }
 }
 
 // returns a number of written Qid objects, length of a data vector
-fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8, u8)>, id_size: usize) -> u64 {
+fn write_bucket(mut file: &File, addr: u64, data: &Vec<(u32, u8, u8)>, id_size: usize) -> u64 {
     file.seek(SeekFrom::Start(addr)).unwrap();
     let mut w = Vec::with_capacity(data.len() * id_size);
     for n in data.iter() {
         w.write_u32::<LittleEndian>(n.0).unwrap();
         w.write_u8(n.1).unwrap();
         w.write_u8(n.2).unwrap();
-        w.write_u8(n.3).unwrap();
     }
     file.write_all(w.as_slice()).unwrap();
 
@@ -242,23 +239,6 @@ pub fn build_shard(
             }
         };
 
-        let sc_freq = match split.next() {
-            Some(f) => match f.parse::<u8>() {
-                Ok(f) => f,
-                Err(err) => {
-                    println!(
-                        "Shard {:?} - failed to parse ngram score {:?}: {:?}",
-                        iid, f, err
-                    );
-                    continue;
-                }
-            },
-            None => {
-                println!("Shard {:?} - query frequency not found", iid);
-                continue;
-            }
-        };
-
         let bucket = invert
             .entry(ngram.to_string())
             .or_insert(Bucket::with_capacity(bk_size));
@@ -267,7 +247,6 @@ pub fn build_shard(
             id: pqid,
             reminder: reminder,
             sc: nsc,
-            f: sc_freq,
         });
 
         qcount += 1;
@@ -331,31 +310,26 @@ mod tests {
             id: 0,
             sc: 1 as u8,
             reminder: 1,
-            f: 2,
         });
         b.push(Qid {
             id: 2,
             sc: 2 as u8,
             reminder: 1,
-            f: 2,
         });
         b.push(Qid {
             id: 3,
             sc: 3 as u8,
             reminder: 1,
-            f: 2,
         });
         b.push(Qid {
             id: 1,
             sc: 5 as u8,
             reminder: 1,
-            f: 2,
         });
         b.push(Qid {
             id: 4,
             sc: 10 as u8,
             reminder: 1,
-            f: 2,
         });
 
         assert_eq!(
@@ -364,7 +338,6 @@ mod tests {
                 id: 3,
                 sc: 3,
                 reminder: 1,
-                f: 2,
             })
         );
 
@@ -372,7 +345,6 @@ mod tests {
             id: 5,
             sc: 4 as u8,
             reminder: 1,
-            f: 2,
         });
 
         assert_eq!(
@@ -381,7 +353,6 @@ mod tests {
                 id: 5,
                 sc: 4,
                 reminder: 1,
-                f: 2,
             })
         );
         assert_eq!(
@@ -390,7 +361,6 @@ mod tests {
                 id: 5,
                 sc: 4,
                 reminder: 1,
-                f: 2,
             })
         );
         assert_eq!(b.len(), 2);

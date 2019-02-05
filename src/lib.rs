@@ -63,12 +63,7 @@ make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
 make_static_var_and_getter!(get_thread_pool_size, THREAD_POOL_SIZE, usize);
 
 #[inline]
-fn read_bucket(
-    mmap: &memmap::Mmap,
-    addr: usize,
-    len: usize,
-    id_size: usize,
-) -> Vec<(u32, u8, u8, u8)> {
+fn read_bucket(mmap: &memmap::Mmap, addr: usize, len: usize, id_size: usize) -> Vec<(u32, u8, u8)> {
     let buf = &mmap[addr..addr + len * id_size];
     (0..len)
         .map(|i| {
@@ -77,10 +72,9 @@ fn read_bucket(
                 LittleEndian::read_u32(&buf[j..j + 4]),
                 buf[j + 4],
                 buf[j + 5],
-                buf[j + 6],
             )
         })
-        .collect::<Vec<(u32, u8, u8, u8)>>()
+        .collect::<Vec<(u32, u8, u8)>>()
 }
 
 // reading part
@@ -205,26 +199,25 @@ unsafe fn get_query_ids_with_simd(
     // -- start simd tf-idf calculation for each id
     let _add_1 = _mm256_set1_ps(1.0);
     let _div_100 = _mm256_set1_ps(100.0);
-    let _div_1000 = _mm256_set1_ps(1000.0);
 
     for (ntr, addr, len, idf) in ntr_addr_len_idf_vec {
         if len == 0 {
             continue;
         }
         let mem_addr = addr as usize * id_size;
-        let mut ids_arr: &[(u32, u8, u8, u8)] = &read_bucket(ifd, mem_addr, len, id_size)[..len];
+        let mut ids_arr: &[(u32, u8, u8)] = &read_bucket(ifd, mem_addr, len, id_size)[..len];
 
         let _idf8 = _mm256_set1_ps(idf);
         while ids_arr.len() >= 8 {
             let (
-                (pqid0, rem0, trel0, _freq0),
-                (pqid1, rem1, trel1, _freq1),
-                (pqid2, rem2, trel2, _freq2),
-                (pqid3, rem3, trel3, _freq3),
-                (pqid4, rem4, trel4, _freq4),
-                (pqid5, rem5, trel5, _freq5),
-                (pqid6, rem6, trel6, _freq6),
-                (pqid7, rem7, trel7, _freq7),
+                (pqid0, rem0, trel0),
+                (pqid1, rem1, trel1),
+                (pqid2, rem2, trel2),
+                (pqid3, rem3, trel3),
+                (pqid4, rem4, trel4),
+                (pqid5, rem5, trel5),
+                (pqid6, rem6, trel6),
+                (pqid7, rem7, trel7),
             ) = (
                 ids_arr[0],
                 ids_arr[1],
@@ -291,12 +284,11 @@ unsafe fn get_query_ids_with_simd(
             ids_arr = &ids_arr[8..];
         }
         // compute tf-idf for remining ids if any
-        for &(pqid, rem, trel, freq) in ids_arr.iter() {
+        for &(pqid, rem, trel) in ids_arr.iter() {
             let tr = util::min(trel, ntr) as f32 / 100.0;
-            let tf = tr * (1.0 + freq as f32 / 1000.0);
             ids.push(SearchResult {
                 id: util::pqid2qid(pqid as u64, rem, nr_shards),
-                sc: tf * idf,
+                sc: tr * idf,
             });
         }
     }
@@ -355,9 +347,8 @@ fn get_query_ids_wo_simd(
                 idf = (n / len as f32).log(2.0);
                 let mem_addr = addr as usize * id_size;
                 let len = util::min(len as usize, bucket_size);
-                for &(pqid, rem, trel, _freq) in read_bucket(ifd, mem_addr, len, id_size).iter() {
+                for &(pqid, rem, trel) in read_bucket(ifd, mem_addr, len, id_size).iter() {
                     let tr = util::min((trel as f32) / 100.0, *ntr);
-                    // let tf = tr * (1.0 + freq as f32 / 1000.0);
                     ids.push(SearchResult {
                         id: util::pqid2qid(pqid as u64, rem, nr_shards),
                         sc: tr * idf,

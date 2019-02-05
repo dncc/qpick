@@ -148,14 +148,6 @@ pub fn shard(
 
                 let mut v: Vec<&str> = line.split("\t").map(|t| t.trim()).collect();
 
-                let mut freq = 1;
-                if v.len() == 2 {
-                    freq = v[1].parse::<u32>().unwrap_or(1);
-                }
-                // scale freq weights from 0.001 to 0.1 (store as u8 -> 1, 2, 3, ..., 100)
-                // use to boost _query_ relevance q = q * (1 + f / 1000.0)
-                let sc_freq = util::min(100, freq) as u8;
-
                 v = v[0].split(":").map(|t| t.trim()).collect();
                 let (qid, prefix, query) = match v.len() {
                     // it's fine if query type is missing
@@ -183,7 +175,7 @@ pub fn shard(
                     // Note: writes u32 shard id for the query, not u64 query id, this is
                     // because a query id that is bigger than 2**32 overflows u64 in pairing
                     // function. When reading the shard id is used to get the original query id.
-                    let line = format!("{}\t{}\t{}\t{}\t{}\n", pqid, reminder, ngram, qsc, sc_freq);
+                    let line = format!("{}\t{}\t{}\t{}\n", pqid, reminder, ngram, qsc);
 
                     let sh_lines = shards_ngrams.entry(shard_id).or_insert(String::from(""));
                     *sh_lines = format!("{}{}", sh_lines, line);

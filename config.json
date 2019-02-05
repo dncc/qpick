@@ -1,5 +1,5 @@
 {
-    "id_size": 7,
+    "id_size": 6,
     "bucket_size": 2500,
     "nr_shards": 32,
     "shard_size": 250000000,
