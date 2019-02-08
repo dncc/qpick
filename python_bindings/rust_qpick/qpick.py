@@ -135,3 +135,12 @@ class Qpick(object):
                                 lib.qpick_dist_iter_next,
                                 lib.qpick_dist_results_free,
                                 lib.qpick_dist_item_free)
+
+
+def shard(file_path, nr_shards, output_dir, concurrency=None):
+    if not concurrency:
+        concurrency = nr_shards
+    lib.qpick_shard(file_path, nr_shards, output_dir, concurrency)
+
+def index(input_dir, first_shard, last_shard, output_dir):
+    lib.qpick_index(input_dir, first_shard, last_shard, output_dir)

@@ -50,6 +50,46 @@ pub fn to_raw_ptr<T>(v: T) -> *mut T {
 }
 
 use qpick::Qpick;
+use qpick::shard;
+use qpick::builder;
+
+// index and shard bindings
+#[no_mangle]
+pub extern "C" fn qpick_shard(
+    file_path: *mut libc::c_char,
+    nr_shards: libc::uint32_t,
+    output_dir: *mut libc::c_char,
+    concurrency: libc::uint32_t,
+) {
+    let file_path = cstr_to_str(file_path);
+    let output_dir = cstr_to_str(output_dir);
+    shard::shard(
+        &file_path.to_string(),
+        nr_shards as usize,
+        &output_dir.to_string(),
+        concurrency as usize,
+    );
+}
+
+#[no_mangle]
+pub extern "C" fn qpick_index(
+    input_dir: *mut libc::c_char,
+    first_shard: libc::uint32_t,
+    last_shard: libc::uint32_t,
+    output_dir: *mut libc::c_char,
+) {
+    let input_dir = cstr_to_str(input_dir);
+    let output_dir = cstr_to_str(output_dir);
+
+    builder::index(
+        &input_dir.to_string(),
+        first_shard as usize,
+        last_shard as usize,
+        &output_dir.to_string(),
+    );
+}
+
+// end index and shard bindings
 
 // `#[no_mangle]` warns for lifetime parameters,
 // a known issue: https://github.com/rust-lang/rust/issues/40342
@@ -67,7 +107,7 @@ pub extern "C" fn qpick_init_with_shard_range(
     end_shard: libc::uint32_t,
 ) -> *mut Qpick {
     let path = cstr_to_str(path);
-    let qpick = Qpick::from_path_with_shard_range(path.to_string(), (start_shard..end_shard));
+    let qpick = Qpick::from_path_with_shard_range(path.to_string(), start_shard..end_shard);
     to_raw_ptr(qpick)
 }
 make_free_fn!(qpick_free, *mut Qpick);

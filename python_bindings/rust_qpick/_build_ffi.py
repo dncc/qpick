@@ -5,6 +5,9 @@ ffi.set_source('rust_qpick._ffi', None)
 ffi.cdef("""
     typedef struct Qpick Qpick;
 
+    void qpick_shard(char*, uint32_t, char*, uint32_t);
+    void qpick_index(char*, uint32_t, uint32_t, char*);
+
     Qpick* qpick_init(char*);
     Qpick* qpick_init_with_shard_range(char*, uint32_t, uint32_t);
     void qpick_free(Qpick*);
