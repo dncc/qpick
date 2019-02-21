@@ -36,6 +36,16 @@ macro_rules! make_free_fn {
     };
 }
 
+// Get a mutable reference from a raw pointer
+macro_rules! mutref_from_ptr {
+    ($p: ident) => {
+        unsafe {
+            assert!(!$p.is_null());
+            &mut *$p
+        }
+    };
+}
+
 pub fn str_to_cstr(string: &str) -> *mut libc::c_char {
     CString::new(string).unwrap().into_raw()
 }
@@ -49,6 +59,22 @@ pub fn to_raw_ptr<T>(v: T) -> *mut T {
     Box::into_raw(Box::new(v))
 }
 
+// --- string vector
+#[no_mangle]
+pub extern "C" fn string_vec_init() -> *mut Vec<String> {
+    to_raw_ptr(vec![])
+}
+make_free_fn!(string_vec_free, *mut Vec<String>);
+
+#[no_mangle]
+pub extern "C" fn string_vec_push(ptr: *mut Vec<String>, query: *mut libc::c_char) {
+    let query = cstr_to_str(query);
+
+    mutref_from_ptr!(ptr).push(query.to_string());
+}
+
+// --- string vector end
+
 use qpick::Qpick;
 use qpick::shard;
 use qpick::builder;
@@ -60,14 +86,18 @@ pub extern "C" fn qpick_shard(
     nr_shards: libc::uint32_t,
     output_dir: *mut libc::c_char,
     concurrency: libc::uint32_t,
+    // prefixes: *mut libc::c_char,
+    prefixes: *mut Vec<String>,
 ) {
     let file_path = cstr_to_str(file_path);
     let output_dir = cstr_to_str(output_dir);
+
     shard::shard(
         &file_path.to_string(),
         nr_shards as usize,
         &output_dir.to_string(),
         concurrency as usize,
+        ref_from_ptr!(prefixes),
     );
 }
 
@@ -140,16 +170,6 @@ pub extern "C" fn qpick_nget_as_string(
     CString::new(s).unwrap().into_raw()
 }
 
-// Get a mutable reference from a raw pointer
-macro_rules! mutref_from_ptr {
-    ($p: ident) => {
-        unsafe {
-            assert!(!$p.is_null());
-            &mut *$p
-        }
-    };
-}
-
 // ------ search iterator ---
 
 #[repr(C)]
@@ -216,20 +236,7 @@ pub extern "C" fn qpick_get(
     to_raw_ptr(res)
 }
 
-// --- nget queries api
-#[no_mangle]
-pub extern "C" fn query_vec_init() -> *mut Vec<String> {
-    to_raw_ptr(vec![])
-}
-make_free_fn!(query_vec_free, *mut Vec<String>);
-
-#[no_mangle]
-pub extern "C" fn query_vec_push(ptr: *mut Vec<String>, query: *mut libc::c_char) {
-    let query = cstr_to_str(query);
-
-    mutref_from_ptr!(ptr).push(query.to_string());
-}
-
+// --- nget queries API
 #[no_mangle]
 pub extern "C" fn qpick_nget(
     ptr: *mut Qpick,

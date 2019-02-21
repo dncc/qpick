@@ -20,12 +20,12 @@ pub type Error = Box<error::Error + Send + Sync>;
 
 const USAGE: &'static str = "
 Usage:
-    mann <command> [<args>...]
-    mann --help
-    mann --version
+    qpick <command> [<args>...]
+    qpick --help
 Commands:
     index   Create ANN index.
     get     Get ANN matches for the given item.
+    shard     Get ANN matches for the given item.
 Options:
     -h, --help     Show this help message.
     -v, --version  Show version.

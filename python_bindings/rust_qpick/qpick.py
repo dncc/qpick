@@ -100,6 +100,9 @@ class Qpick(object):
 
     # qpick.get('a')
     def get(self, query, count=100):
+        if type(query) == str:
+            query = query.encode('utf-8')
+
         res_ptr = lib.qpick_get(self._ptr, query, count)
         return QpickSearchResults(res_ptr,
                                 lib.qpick_search_iter_next,
@@ -108,11 +111,13 @@ class Qpick(object):
 
     # qpick.nget(['a', 'b', 'c'])
     def nget(self, queries, count=100):
-        qvec = lib.query_vec_init()
-        qvec_ptr = ffi.gc(qvec, lib.query_vec_free)
+        qvec = lib.string_vec_init()
+        qvec_ptr = ffi.gc(qvec, lib.string_vec_free)
 
         for q in queries:
-            lib.query_vec_push(qvec_ptr, q)
+            if type(q) == str:
+                q = q.encode('utf-8')
+            lib.string_vec_push(qvec_ptr, q)
 
         res_ptr = lib.qpick_nget(self._ptr, qvec_ptr, count)
 
@@ -123,11 +128,16 @@ class Qpick(object):
 
     # qpick.get_distances('q', ['a', 'b', 'c'])
     def get_distances(self, query, candidates):
-        qvec = lib.query_vec_init()
-        qvec_ptr = ffi.gc(qvec, lib.query_vec_free)
+        qvec = lib.string_vec_init()
+        qvec_ptr = ffi.gc(qvec, lib.string_vec_free)
+
+        if type(query) == str:
+            query = query.encode('utf-8')
 
         for q in candidates:
-            lib.query_vec_push(qvec_ptr, q)
+            if type(q) == str:
+                q = q.encode('utf-8')
+            lib.string_vec_push(qvec_ptr, q)
 
         res_ptr = lib.qpick_get_distances(self._ptr, query, qvec_ptr)
 
@@ -137,10 +147,30 @@ class Qpick(object):
                                 lib.qpick_dist_item_free)
 
 
-def shard(file_path, nr_shards, output_dir, concurrency=None):
+def shard(file_path, nr_shards, output_dir, concurrency=None, prefixes=[]):
     if not concurrency:
         concurrency = nr_shards
-    lib.qpick_shard(file_path, nr_shards, output_dir, concurrency)
+
+    if type(file_path) == str:
+        file_path = file_path.encode()
+
+    if type(output_dir) == str:
+        output_dir = output_dir.encode()
+
+    pref_vec = lib.string_vec_init()
+    pref_vec_ptr = ffi.gc(pref_vec, lib.string_vec_free)
+    for p in prefixes:
+        if type(p) == str:
+            p = p.encode('utf-8')
+        lib.string_vec_push(pref_vec_ptr, p)
+
+    lib.qpick_shard(file_path, nr_shards, output_dir, concurrency, pref_vec_ptr)
 
 def index(input_dir, first_shard, last_shard, output_dir):
+    if type(input_dir) == str:
+        input_dir = input_dir.encode('utf-8')
+
+    if type(output_dir) == str:
+        output_dir = output_dir.encode('utf-8')
+
     lib.qpick_index(input_dir, first_shard, last_shard, output_dir)

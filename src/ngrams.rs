@@ -9,7 +9,11 @@ use shard::QueryType;
 
 #[inline]
 fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut HashMap<String, f32>, mult: f32) {
-    if words.len() > 1 {
+    if words.len() == 1 {
+        let w = words[0].0.clone();
+        let tr = mult * words[0].1;
+        ngrams.insert(w, tr);
+    } else if words.len() > 1 {
         for i in 0..words.len() - 1 {
             let (w1, mut w2) = (&words[i].0, &words[i + 1].0);
             let mut tr = mult * (words[i].1 + words[i + 1].1);
@@ -44,8 +48,8 @@ fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut HashMap<String, f32>, mult
 
         if words.len() > 3 {
             let tr_threshold = 2.0 / words.len() as f32;
-            for i in 0..words.len() - 1 {
-                for j in i + 1..words.len() {
+            for i in 0..words.len() - 2 {
+                for j in i + 2..words.len() {
                     let mut tr = words[i].1 + words[j].1;
                     if tr < tr_threshold {
                         continue;
@@ -72,28 +76,6 @@ fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut HashMap<String, f32>, mult
                 }
             }
         }
-
-        // the first and the last term only for titles (bow, len=4)
-        if words.len() > 3 && mult < 1.0 {
-            let (t1, t2) = (&words[0], &words[&words.len() - 1]);
-            let (w1, w2) = (&t1.0, &t2.0);
-            let tr = mult * (t1.1 + t2.1);
-            let mut v = String::with_capacity(w1.len() + w2.len() + 1);
-            if w1 < w2 {
-                v.push_str(w1);
-                v.push_str(" ");
-                v.push_str(w2);
-            } else {
-                v.push_str(w2);
-                v.push_str(" ");
-                v.push_str(w1);
-            }
-            ngrams.insert(v, tr);
-        }
-    } else if words.len() == 1 {
-        let w = words[0].0.clone();
-        let tr = mult * words[0].1;
-        ngrams.insert(w, tr);
     }
 }
 

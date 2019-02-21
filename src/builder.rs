@@ -82,8 +82,12 @@ impl Bucket {
         self.qids.peek()
     }
 
-    fn len(self) -> u64 {
-        self.qids.len() as u64
+    fn len(&self) -> usize {
+        self.qids.len()
+    }
+
+    fn is_full(&self) -> bool {
+        self.qids.len() == self.capacity
     }
 
     fn to_vec(self) -> Vec<(u32, u8, u8)> {
@@ -160,7 +164,7 @@ pub fn build_shard(
     iid: u32,
     input_file: &str,
     id_size: usize,
-    bk_size: usize,
+    bucket_size: usize,
     out_shard_name: &str,
     out_map_name: &str,
 ) -> Result<(), Error> {
@@ -241,7 +245,7 @@ pub fn build_shard(
 
         let bucket = invert
             .entry(ngram.to_string())
-            .or_insert(Bucket::with_capacity(bk_size));
+            .or_insert(Bucket::with_capacity(bucket_size));
 
         bucket.push(Qid {
             id: pqid,

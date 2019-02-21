@@ -5,6 +5,7 @@ extern crate fst;
 extern crate libc;
 #[macro_use]
 extern crate serde_derive;
+extern crate flate2;
 extern crate memmap;
 extern crate serde_json;
 
@@ -702,12 +703,13 @@ impl Qpick {
         nr_shards: usize,
         output_dir: String,
         concurrency: usize,
+        prefixes: &Vec<String>,
     ) -> Result<(), std::io::Error> {
         println!(
             "Creating {:?} shards from {:?} to {:?}",
             nr_shards, file_path, output_dir
         );
-        shard::shard(&file_path, nr_shards, &output_dir, concurrency)
+        shard::shard(&file_path, nr_shards, &output_dir, concurrency, prefixes)
     }
 
     pub fn index(

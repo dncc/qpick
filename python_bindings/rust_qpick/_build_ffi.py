@@ -5,9 +5,6 @@ ffi.set_source('rust_qpick._ffi', None)
 ffi.cdef("""
     typedef struct Qpick Qpick;
 
-    void qpick_shard(char*, uint32_t, char*, uint32_t);
-    void qpick_index(char*, uint32_t, uint32_t, char*);
-
     Qpick* qpick_init(char*);
     Qpick* qpick_init_with_shard_range(char*, uint32_t, uint32_t);
     void qpick_free(Qpick*);
@@ -32,14 +29,14 @@ ffi.cdef("""
     void qpick_search_item_free(QpickSearchItem*);
 
     /**
-       nget api
+       nget API
     **/
-    typedef struct QpickQueryVec QpickQueryVec;
-    QpickQueryVec* query_vec_init();
-    void query_vec_free(QpickQueryVec*);
-    void query_vec_push(QpickQueryVec*, char*);
+    typedef struct StringVec StringVec;
+    StringVec* string_vec_init();
+    void string_vec_free(StringVec*);
+    void string_vec_push(StringVec*, char*);
 
-    SearchResults* qpick_nget(Qpick*, QpickQueryVec*, uint32_t);
+    SearchResults* qpick_nget(Qpick*, StringVec*, uint32_t);
 
     /**
        Distance Iterator
@@ -51,11 +48,18 @@ ffi.cdef("""
 
     typedef struct DistResults DistResults;
 
-    DistResults* qpick_get_distances(Qpick*, char*, QpickQueryVec*);
+    DistResults* qpick_get_distances(Qpick*, char*, StringVec*);
     QpickDistItem* qpick_dist_iter_next(DistResults*);
 
     void qpick_dist_results_free(DistResults*);
     void qpick_dist_item_free(QpickDistItem*);
+
+    /**
+        shard and index API
+    **/
+    void qpick_shard(char*, uint32_t, char*, uint32_t, StringVec*);
+    void qpick_index(char*, uint32_t, uint32_t, char*);
+
 """)
 
 if __name__ == '__main__':
