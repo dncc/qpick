@@ -177,7 +177,8 @@ pub fn shard(
                     }
 
                     let line = line.unwrap();
-                    let (query_id, query_type, query) = match parse_query_line(id_count, &line) {
+                    let (query_id, query_type, query) = match parse_query_line(id_count - 1, &line)
+                    {
                         Ok((query_id, query_type, query)) => (query_id, query_type, query),
                         Err(e) => {
                             println!(
