@@ -21,7 +21,7 @@ ffi.cdef("""
 
     typedef struct SearchResults SearchResults;
 
-    SearchResults* qpick_get(Qpick*, char*, uint32_t);
+    SearchResults* qpick_get(Qpick*, char*, uint32_t, float);
     QpickSearchItem* qpick_search_iter_next(SearchResults*);
 
     void qpick_search_results_free(SearchResults*);

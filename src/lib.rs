@@ -393,6 +393,7 @@ impl Qpick {
         &self,
         ngrams: &FnvHashMap<String, f32>,
         count: Option<usize>,
+        filter: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         let shards_ngrams = self.shard_ngrams(ngrams);
         let shard_results: Vec<ShardResults> = shards_ngrams
@@ -489,7 +490,7 @@ impl Qpick {
         return dist_results;
     }
 
-    pub fn get(&self, query: &str, count: u32) -> Vec<SearchResult> {
+    pub fn get(&self, query: &str, count: u32, filter: f32) -> Vec<SearchResult> {
         if query == "" || count == 0 {
             return vec![];
         }
@@ -497,7 +498,8 @@ impl Qpick {
         let ref ngrams: FnvHashMap<String, f32> =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
-        match self.get_ids(ngrams, Some(count as usize)) {
+
+        match self.get_ids(ngrams, Some(count as usize), LOW_SIM_THRESH) {
             Ok(ids) => ids,
             Err(err) => panic!("Failed to get ids with: {message}", message = err),
         }

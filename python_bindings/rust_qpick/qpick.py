@@ -75,6 +75,9 @@ class Qpick(object):
         # self._ctx = ffi.gc(lib.qpick_context_new(), lib.qpick_context_free)
 
         if dir_path:
+            if type(dir_path) == str:
+                dir_path = dir_path.encode('utf-8')
+
             if not os.path.isdir(dir_path):
                 raise Exception("%s is not a directory!" % dir_path)
 
@@ -97,11 +100,11 @@ class Qpick(object):
         self._ptr = ffi.gc(s, lib.qpick_free)
 
     # qpick.get('a')
-    def get(self, query, count=100):
+    def get(self, query, count=100, similarity_threshold=0.099):
         if type(query) == str:
             query = query.encode('utf-8')
 
-        res_ptr = lib.qpick_get(self._ptr, query, count)
+        res_ptr = lib.qpick_get(self._ptr, query, count, similarity_threshold)
         return QpickSearchResults(res_ptr,
                                 lib.qpick_search_iter_next,
                                 lib.qpick_search_results_free,
