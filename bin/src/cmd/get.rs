@@ -49,7 +49,7 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         qpick = qpick::Qpick::from_path("./index".to_string());
     }
 
-    let r = qpick.get(&args.arg_query, args.arg_count);
+    let r = qpick.get(&args.arg_query, args.arg_count, 0.099);
     let v: Vec<(u64, f32)> = r.iter().map(|q| (q.id, q.sc)).collect();
     println!("{:?}", v);
 

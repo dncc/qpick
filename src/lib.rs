@@ -554,6 +554,7 @@ impl Qpick {
         &self,
         ngrams: &HashMap<String, f32>,
         count: Option<usize>,
+        filter: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         let shards_ngrams = self.shard_ngrams(ngrams);
         let shard_ids: Vec<ShardIds> = shards_ngrams
@@ -579,7 +580,7 @@ impl Qpick {
 
         let mut vdata: Vec<SearchResult> = hdata
             .par_iter()
-            .filter(|(_, sc)| *sc / norm > LOW_SIM_THRESH)
+            .filter(|(_, sc)| *sc / norm > filter)
             .map(|(id, sc)| SearchResult {
                 id: *id,
                 sc: util::max(1.0 - *sc / norm, 0.0),
@@ -592,7 +593,7 @@ impl Qpick {
     }
 
     pub fn get_str(&self, query: &str, count: u32) -> String {
-        let mut res: Vec<(u64, f32)> = self.get(query, 30 * count)
+        let mut res: Vec<(u64, f32)> = self.get(query, 30 * count, LOW_SIM_THRESH)
             .into_iter()
             .map(|s| (s.id, s.sc))
             .collect();
@@ -659,7 +660,7 @@ impl Qpick {
         return dist_results;
     }
 
-    pub fn get(&self, query: &str, count: u32) -> Vec<SearchResult> {
+    pub fn get(&self, query: &str, count: u32, filter: f32) -> Vec<SearchResult> {
         if query == "" || count == 0 {
             return vec![];
         }
@@ -667,7 +668,7 @@ impl Qpick {
         let ref ngrams: HashMap<String, f32> =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
 
-        match self.get_ids(ngrams, Some(count as usize)) {
+        match self.get_ids(ngrams, Some(count as usize), filter) {
             Ok(ids) => ids,
             Err(err) => panic!("Failed to get ids with: {message}", message = err),
         }
@@ -687,7 +688,7 @@ impl Qpick {
             }
         }
 
-        match self.get_ids(ngrams, Some(count as usize)) {
+        match self.get_ids(ngrams, Some(count as usize), LOW_SIM_THRESH) {
             Ok(ids) => ids,
             Err(err) => panic!("Failed to get ids with: {message}", message = err),
         }
@@ -728,8 +729,8 @@ impl Qpick {
         builder::index(&input_dir, first_shard, last_shard, &output_dir)
     }
 
-    pub fn get_search_results(&self, query: &str, count: u32) -> SearchResults {
-        SearchResults::new(self.get(query, count).into_iter())
+    pub fn get_search_results(&self, query: &str, count: u32, filter: f32) -> SearchResults {
+        SearchResults::new(self.get(query, count, filter).into_iter())
     }
 
     pub fn get_dist_results(&self, query: &str, candidates: &Vec<String>) -> DistResults {

@@ -230,9 +230,10 @@ pub extern "C" fn qpick_get(
     ptr: *mut Qpick,
     query: *mut libc::c_char,
     count: libc::uint32_t,
+    similarity_threshold: libc::c_float,
 ) -> *mut qpick::SearchResults {
     let query = cstr_to_str(query);
-    let res = ref_from_ptr!(ptr).get_search_results(query, count);
+    let res = ref_from_ptr!(ptr).get_search_results(query, count, similarity_threshold);
     to_raw_ptr(res)
 }
 
