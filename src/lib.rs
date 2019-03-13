@@ -498,8 +498,7 @@ impl Qpick {
         let ref ngrams: FnvHashMap<String, f32> =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
-
-        match self.get_ids(ngrams, Some(count as usize), LOW_SIM_THRESH) {
+        match self.get_ids(ngrams, Some(count as usize), filter) {
             Ok(ids) => ids,
             Err(err) => panic!("Failed to get ids with: {message}", message = err),
         }
@@ -510,8 +509,8 @@ impl Qpick {
         merge::merge(&self.path, self.config.nr_shards as usize)
     }
 
-    pub fn get_search_results(&self, query: &str, count: u32) -> SearchResults {
-        SearchResults::new(self.get(query, count).into_iter())
+    pub fn get_search_results(&self, query: &str, count: u32, filter: f32) -> SearchResults {
+        SearchResults::new(self.get(query, count, filter).into_iter())
     }
 
     pub fn get_dist_results(&self, query: &str, candidates: &Vec<String>) -> DistResults {
