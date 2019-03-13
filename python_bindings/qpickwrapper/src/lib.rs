@@ -243,8 +243,13 @@ pub extern "C" fn qpick_nget(
     ptr: *mut Qpick,
     queries: *mut Vec<String>,
     count: libc::uint32_t,
+    similarity_threshold: libc::c_float,
 ) -> *mut qpick::SearchResults {
-    to_raw_ptr(ref_from_ptr!(ptr).nget_search_results(ref_from_ptr!(queries), count))
+    to_raw_ptr(ref_from_ptr!(ptr).nget_search_results(
+        ref_from_ptr!(queries),
+        count,
+        similarity_threshold,
+    ))
 }
 
 #[no_mangle]

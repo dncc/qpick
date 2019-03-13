@@ -14,7 +14,7 @@ fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut HashMap<String, f32>, mult
         let tr = mult * words[0].1;
         ngrams.insert(w, tr);
     } else if words.len() > 1 {
-        for i in 0..words.len() - 1 {
+        for i in (0..words.len() - 1).step_by(2) {
             let (w1, mut w2) = (&words[i].0, &words[i + 1].0);
             let mut tr = mult * (words[i].1 + words[i + 1].1);
             let mut v = String::with_capacity(w1.len() + w2.len() + 1);
@@ -28,53 +28,6 @@ fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut HashMap<String, f32>, mult
                 v.push_str(w1);
             }
             ngrams.insert(v, tr);
-
-            if i < words.len() - 2 {
-                w2 = &words[i + 2].0;
-                tr = 0.97 * (words[i].1 + words[i + 2].1);
-                v = String::with_capacity(w1.len() + w2.len() + 1);
-                if w1 < w2 {
-                    v.push_str(w1);
-                    v.push_str(" ");
-                    v.push_str(w2);
-                } else {
-                    v.push_str(w2);
-                    v.push_str(" ");
-                    v.push_str(w1);
-                }
-                ngrams.insert(v, tr);
-            }
-        }
-
-        if words.len() > 3 {
-            let tr_threshold = 2.0 / words.len() as f32;
-            for i in 0..words.len() - 2 {
-                for j in i + 2..words.len() {
-                    let mut tr = words[i].1 + words[j].1;
-                    if tr < tr_threshold {
-                        continue;
-                    }
-
-                    let (w1, mut w2) = (&words[i].0, &words[j].0);
-                    let mut v = String::with_capacity(w1.len() + w2.len() + 1);
-
-                    if w1 < w2 {
-                        v.push_str(w1);
-                        v.push_str(" ");
-                        v.push_str(w2);
-                    } else {
-                        v.push_str(w2);
-                        v.push_str(" ");
-                        v.push_str(w1);
-                    }
-
-                    if ngrams.contains_key(&v) {
-                        continue;
-                    }
-
-                    ngrams.insert(v, tr);
-                }
-            }
         }
     }
 }
@@ -154,49 +107,49 @@ pub fn parse(
         .collect::<Vec<String>>();
     let terms_rel = get_terms_relevance(&wvec, tr_map);
 
-    let mut tempv = vec![];
+    // let mut tempv = vec![];
     // concatenate terms with stopwords
-    let mut w_stop: Vec<(String, f32)> = vec![]; // [('the best', 0.2), ('search', 0.3)]
-                                                 // concatenate terms without stopwords
+    // let mut w_stop: Vec<(String, f32)> = vec![]; // [('the best', 0.2), ('search', 0.3)]
+    // concatenate terms without stopwords
     let mut wo_stop: Vec<(String, f32)> = vec![]; // [('best', 0.15), ('search', 0.3)]
-    let mut has_stopword = false;
+                                                  // let mut has_stopword = false;
 
     for w in wvec {
         // already encountered consecutive 3 stop words, push them to stopwords stack
-        if tempv.len() > 2 {
-            let (s, r) = fold_to_ngram(tempv, &terms_rel);
-            w_stop.push((s, r));
-            tempv = vec![];
-        }
+        // if tempv.len() > 2 {
+        // let (s, r) = fold_to_ngram(tempv, &terms_rel);
+        // w_stop.push((s, r));
+        // tempv = vec![];
+        // }
 
-        if stopwords.contains(&w) || w.len() < 3 {
-            has_stopword = true;
-            tempv.push(w.clone());
-            continue;
-        }
+        // if stopwords.contains(&w) || w.len() < 3 {
+        // has_stopword = true;
+        // tempv.push(w.clone());
+        // continue;
+        // }
 
         // since we are here the last word is not a stop-word, insert as a unigram
         ngrams.insert(w.clone(), *terms_rel.get(&w).unwrap());
 
-        if has_stopword {
-            tempv.push(w.clone());
-            let (s, r) = fold_to_ngram(tempv, &terms_rel);
-            w_stop.push((s, r));
-            wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
+        // if has_stopword {
+        // tempv.push(w.clone());
+        // let (s, r) = fold_to_ngram(tempv, &terms_rel);
+        // w_stop.push((s, r));
+        // wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
 
-            has_stopword = false;
-            tempv = vec![];
-        } else {
-            w_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
-            wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
-        }
+        // has_stopword = false;
+        // tempv = vec![];
+        // } else {
+        // w_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
+        wo_stop.push((w.clone(), *terms_rel.get(&w).unwrap()));
+        // }
     }
 
     // in case query consists of stopwords only
-    if tempv.len() > 0 {
-        let (s, r) = fold_to_ngram(tempv, &terms_rel);
-        w_stop.push((s, r));
-    }
+    // if tempv.len() > 0 {
+    // let (s, r) = fold_to_ngram(tempv, &terms_rel);
+    // w_stop.push((s, r));
+    // }
 
     let mult = match query_type {
         QueryType::Q => 1.0,
@@ -204,7 +157,7 @@ pub fn parse(
     };
 
     // generate ngrams as bag of words combination of terms c a b d -> ac, bc, ab, ad, bd
-    bow_ngrams(w_stop, &mut ngrams, mult);
+    // bow_ngrams(w_stop, &mut ngrams, mult);
     bow_ngrams(wo_stop, &mut ngrams, mult);
 
     return ngrams;

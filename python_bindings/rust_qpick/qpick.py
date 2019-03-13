@@ -113,7 +113,7 @@ class Qpick(object):
                                 lib.qpick_search_item_free)
 
     # qpick.nget(['a', 'b', 'c'])
-    def nget(self, queries, count=100):
+    def nget(self, queries, count=100, similarity_threshold=0.099):
         qvec = lib.string_vec_init()
         qvec_ptr = ffi.gc(qvec, lib.string_vec_free)
 
@@ -122,7 +122,7 @@ class Qpick(object):
                 q = q.encode('utf-8')
             lib.string_vec_push(qvec_ptr, q)
 
-        res_ptr = lib.qpick_nget(self._ptr, qvec_ptr, count)
+        res_ptr = lib.qpick_nget(self._ptr, qvec_ptr, count, similarity_threshold)
 
         return QpickSearchResults(res_ptr,
                                 lib.qpick_search_iter_next,

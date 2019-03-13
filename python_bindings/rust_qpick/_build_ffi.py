@@ -36,7 +36,7 @@ ffi.cdef("""
     void string_vec_free(StringVec*);
     void string_vec_push(StringVec*, char*);
 
-    SearchResults* qpick_nget(Qpick*, StringVec*, uint32_t);
+    SearchResults* qpick_nget(Qpick*, StringVec*, uint32_t, float);
 
     /**
        Distance Iterator

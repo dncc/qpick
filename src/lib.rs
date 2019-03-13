@@ -593,7 +593,7 @@ impl Qpick {
     }
 
     pub fn get_str(&self, query: &str, count: u32) -> String {
-        let mut res: Vec<(u64, f32)> = self.get(query, 30 * count, LOW_SIM_THRESH)
+        let mut res: Vec<(u64, f32)> = self.get(query, count, LOW_SIM_THRESH)
             .into_iter()
             .map(|s| (s.id, s.sc))
             .collect();
@@ -604,7 +604,7 @@ impl Qpick {
 
     pub fn nget_str(&self, queries: &str, count: u32) -> String {
         let qvec: Vec<String> = serde_json::from_str(queries).unwrap();
-        let mut res: Vec<(u64, f32)> = self.nget(&qvec, 30 * count)
+        let mut res: Vec<(u64, f32)> = self.nget(&qvec, count, LOW_SIM_THRESH)
             .into_iter()
             .map(|s| (s.id, s.sc))
             .collect();
@@ -668,13 +668,14 @@ impl Qpick {
         let ref ngrams: HashMap<String, f32> =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
 
+        //println!("ngrams {:?}", ngrams);
         match self.get_ids(ngrams, Some(count as usize), filter) {
             Ok(ids) => ids,
             Err(err) => panic!("Failed to get ids with: {message}", message = err),
         }
     }
 
-    pub fn nget(&self, qvec: &Vec<String>, count: u32) -> Vec<SearchResult> {
+    pub fn nget(&self, qvec: &Vec<String>, count: u32, filter: f32) -> Vec<SearchResult> {
         if qvec.len() == 0 || count == 0 {
             return vec![];
         }
@@ -688,7 +689,7 @@ impl Qpick {
             }
         }
 
-        match self.get_ids(ngrams, Some(count as usize), LOW_SIM_THRESH) {
+        match self.get_ids(ngrams, Some(count as usize), filter) {
             Ok(ids) => ids,
             Err(err) => panic!("Failed to get ids with: {message}", message = err),
         }
@@ -737,8 +738,13 @@ impl Qpick {
         DistResults::new(self.get_distances(query, candidates).into_iter())
     }
 
-    pub fn nget_search_results(&self, qvec: &Vec<String>, count: u32) -> SearchResults {
-        SearchResults::new(self.nget(qvec, count).into_iter())
+    pub fn nget_search_results(
+        &self,
+        qvec: &Vec<String>,
+        count: u32,
+        filter: f32,
+    ) -> SearchResults {
+        SearchResults::new(self.nget(qvec, count, filter).into_iter())
     }
 }
 
