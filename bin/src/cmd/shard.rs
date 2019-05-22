@@ -1,15 +1,15 @@
 use docopt::Docopt;
 use Error;
 
-use qpick;
+use qpick::shard;
 
 const USAGE: &'static str = "
-Get vector ids and scores for ANN.
+Creates ngram shards from an input directory.
 Usage:
     qpick shard [options] <path> <nr-shards> <output-dir> <prefixes> <concurrency>
     qpick shard --help
 Options:
-    -h, --help  path: is a file path to queries input file.
+    -h, --help  path: is a directory path to query files (.gz).
                 nr-shards: how many shards to create.
                 ouput-dir: where to save shard files
 ";
@@ -46,10 +46,10 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
 
     println!("{:?}", prefixes);
 
-    let r = qpick::Qpick::shard(
-        args.arg_path,
+    let r = shard::shard(
+        &args.arg_path,
         args.arg_nr_shards,
-        args.arg_output_dir,
+        &args.arg_output_dir,
         concurrency,
         &prefixes,
     );

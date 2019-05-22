@@ -75,9 +75,11 @@ pub extern "C" fn string_vec_push(ptr: *mut Vec<String>, query: *mut libc::c_cha
 
 // --- string vector end
 
+// --- shard, index and i2q
 use qpick::Qpick;
 use qpick::shard;
 use qpick::builder;
+use qpick::stringvec;
 
 // index and shard bindings
 #[no_mangle]
@@ -92,13 +94,14 @@ pub extern "C" fn qpick_shard(
     let file_path = cstr_to_str(file_path);
     let output_dir = cstr_to_str(output_dir);
 
-    shard::shard(
+    let r = shard::shard(
         &file_path.to_string(),
         nr_shards as usize,
         &output_dir.to_string(),
         concurrency as usize,
         ref_from_ptr!(prefixes),
     );
+    println!("{:?}", r);
 }
 
 #[no_mangle]
@@ -111,15 +114,24 @@ pub extern "C" fn qpick_index(
     let input_dir = cstr_to_str(input_dir);
     let output_dir = cstr_to_str(output_dir);
 
-    builder::index(
+    let r = builder::index(
         &input_dir.to_string(),
         first_shard as usize,
         last_shard as usize,
         &output_dir.to_string(),
     );
+    println!("{:?}", r);
 }
 
-// end index and shard bindings
+#[no_mangle]
+pub extern "C" fn qpick_compile_i2q(file_path: *mut libc::c_char, output_dir: *mut libc::c_char) {
+    let file_path = cstr_to_str(file_path);
+    let output_dir = cstr_to_str(output_dir);
+
+    let r = stringvec::compile(&file_path.to_string(), &output_dir.to_string());
+    println!("{:?}", r);
+}
+// end shard, index and i2q bindings
 
 // `#[no_mangle]` warns for lifetime parameters,
 // a known issue: https://github.com/rust-lang/rust/issues/40342

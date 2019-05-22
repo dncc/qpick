@@ -55,9 +55,10 @@ ffi.cdef("""
     void qpick_dist_item_free(QpickDistItem*);
 
     /**
-        shard and index API
+        shard, index, compile_i2q API
     **/
     void qpick_shard(char*, uint32_t, char*, uint32_t, StringVec*);
+    void qpick_compile_i2q(char*, char*);
     void qpick_index(char*, uint32_t, uint32_t, char*);
 
 """)

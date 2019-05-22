@@ -166,6 +166,16 @@ def shard(file_path, nr_shards, output_dir, concurrency=None, prefixes=[]):
 
     lib.qpick_shard(file_path, nr_shards, output_dir, concurrency, pref_vec_ptr)
 
+def compile_i2q(file_path, output_dir):
+    if type(file_path) == str:
+        file_path = file_path.encode()
+
+    if type(output_dir) == str:
+        output_dir = output_dir.encode()
+
+    lib.qpick_compile_i2q(file_path, output_dir)
+
+
 def index(input_dir, first_shard, last_shard, output_dir):
     if type(input_dir) == str:
         input_dir = input_dir.encode('utf-8')

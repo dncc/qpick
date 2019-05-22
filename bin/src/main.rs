@@ -23,9 +23,8 @@ Usage:
     qpick <command> [<args>...]
     qpick --help
 Commands:
-    index   Create ANN index.
-    get     Get ANN matches for the given item.
-    shard     Get ANN matches for the given item.
+    index   Create search index.
+    get     Get matches for the given item.
 Options:
     -h, --help     Show this help message.
     -v, --version  Show version.
@@ -38,6 +37,7 @@ struct Args {
 
 #[derive(Debug, Deserialize)]
 enum Command {
+    I2q,
     Get,
     Shard,
     Index,
@@ -52,6 +52,7 @@ impl Command {
         let argv: Vec<String> = env::args().collect();
         match self {
             Get => cmd::get::run(argv),
+            I2q => cmd::i2q::run(argv),
             Shard => cmd::shard::run(argv),
             Index => cmd::index::run(argv),
             Merge => cmd::merge::run(argv),

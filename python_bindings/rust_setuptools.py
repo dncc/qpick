@@ -78,7 +78,7 @@ class RustBuildCommand(Command):
                 args.extend(list(self.extra_cargo_args or []))
                 if not self.quiet:
                     print(' '.join(args), file=sys.stderr)
-                output = subprocess.check_output(args, env=env)
+                output = subprocess.check_output(args, env=env) or 'OK'
             except subprocess.CalledProcessError as e:
                 msg = 'cargo failed with code: %d\n%s' % (e.returncode, e.output)
                 raise Exception(msg)

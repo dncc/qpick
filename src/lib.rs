@@ -6,7 +6,9 @@ extern crate libc;
 #[macro_use]
 extern crate serde_derive;
 extern crate flate2;
+extern crate fs2;
 extern crate memmap;
+extern crate pbr;
 extern crate serde_json;
 
 use std::io;
@@ -31,6 +33,7 @@ pub mod merge;
 pub mod shard;
 pub mod builder;
 pub mod stopwords;
+pub mod stringvec;
 
 use shard::QueryType;
 
@@ -696,36 +699,6 @@ impl Qpick {
     pub fn merge(&self) -> Result<(), Error> {
         println!("Merging index maps from: {:?}", &self.path);
         merge::merge(&self.path, self.config.nr_shards as usize)
-    }
-
-    pub fn shard(
-        file_path: String,
-        nr_shards: usize,
-        output_dir: String,
-        concurrency: usize,
-        prefixes: &Vec<String>,
-    ) -> Result<(), std::io::Error> {
-        println!(
-            "Creating {:?} shards from {:?} to {:?}",
-            nr_shards, file_path, output_dir
-        );
-        shard::shard(&file_path, nr_shards, &output_dir, concurrency, prefixes)
-    }
-
-    pub fn index(
-        input_dir: String,
-        first_shard: usize,
-        last_shard: usize,
-        output_dir: String,
-    ) -> Result<(), Error> {
-        println!(
-            "Compiling {:?} shards from {:?} to {:?}",
-            last_shard - first_shard,
-            input_dir,
-            output_dir
-        );
-
-        builder::index(&input_dir, first_shard, last_shard, &output_dir)
     }
 
     pub fn get_search_results(&self, query: &str, count: u32) -> SearchResults {

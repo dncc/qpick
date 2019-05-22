@@ -1,7 +1,7 @@
 use docopt::Docopt;
 use Error;
 
-use qpick;
+use qpick::builder;
 
 const USAGE: &'static str = "
 Get vector ids and scores for ANN.
@@ -31,11 +31,11 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         .and_then(|d| d.argv(&argv).deserialize())
         .unwrap_or_else(|e| e.exit());
 
-    let r = qpick::Qpick::index(
-        args.arg_input_dir,
+    let r = builder::index(
+        &args.arg_input_dir,
         args.arg_first_shard,
         args.arg_last_shard,
-        args.arg_output_dir,
+        &args.arg_output_dir,
     );
 
     println!("{:?}", r);
