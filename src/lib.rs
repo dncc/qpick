@@ -9,6 +9,7 @@ extern crate flate2;
 extern crate fs2;
 extern crate memmap;
 extern crate pbr;
+extern crate rand;
 extern crate serde_json;
 
 use std::io;

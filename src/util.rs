@@ -191,3 +191,24 @@ mod tests {
 pub static BRED: &str = "\x1B[0;31m";
 pub static BYELL: &str = "\x1B[0;33m";
 pub static ECOL: &str = "\x1B[0m";
+
+// tmp file
+use std::str;
+use rand::Rng;
+use rand::distributions::Alphanumeric;
+use std::path::PathBuf;
+use std::env::temp_dir;
+
+pub fn tmp_file_path(prefix: &str, suffix: &str, rand_len: usize) -> PathBuf {
+    let mut buf = String::with_capacity(prefix.len() + suffix.len() + rand_len);
+    buf.push_str(prefix);
+    unsafe {
+        rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(rand_len)
+            .for_each(|b| buf.push_str(str::from_utf8_unchecked(&[b as u8])))
+    }
+    buf.push_str(suffix);
+
+    temp_dir().join(buf)
+}
