@@ -235,7 +235,7 @@ impl StrVecWriter {
             .write_all(&s.as_bytes())
             .expect("Unable to write query text");
         &self.str_writer.flush().expect("String flush failed!");
-        self.add_offset();
+        let _offset = self.add_offset();
 
         s.len()
     }
@@ -258,44 +258,46 @@ impl StrVecWriter {
         let offsets_size = self.off_writer.seek(SeekFrom::End(0)).unwrap();
         buf.write_u64::<LittleEndian>(offsets_size).unwrap();
         out_file.write_all(buf.as_slice()).unwrap();
+        out_file.flush().expect("Failed to flush offset size!");
         bytes_written += size_of::<u64>() as u64;
 
         // write offsets
-        let offsets_file = OpenOptions::new()
+        let mut offsets_file = OpenOptions::new()
             .read(true)
             .open(&self.tmp_off_name)
             .unwrap();
 
-        let mut buf = vec![0u8; offsets_size as usize];
-        let mut handle = offsets_file.take(offsets_size);
-        let bytes_read = handle.read(&mut buf).unwrap_or(0) as u64;
+        let mut buf = Vec::with_capacity(offsets_size as usize);
+        // Note: read_to_end appends data to a buffer
+        let bytes_read = offsets_file.read_to_end(&mut buf).unwrap_or(0) as u64;
         assert!(
             bytes_read == offsets_size,
             "Failed to read offsets file, read {:?} out of {:?}",
             bytes_read,
             offsets_size,
         );
-        out_file.write_all(buf.as_slice()).unwrap();
+        out_file.write_all(&buf).unwrap();
+        out_file.flush().expect("Failed to flush offsets!");
         bytes_written += bytes_read;
 
         // write strings
-        let strings_file = OpenOptions::new()
+        let mut strings_file = OpenOptions::new()
             .read(true)
             .open(&self.tmp_str_name)
             .unwrap();
 
         // TODO assert the last offset == strings file size
         let strings_size = self.str_writer.seek(SeekFrom::End(0)).unwrap();
-        let mut buf = vec![0u8; strings_size as usize];
-        let mut handle = strings_file.take(strings_size);
-        let bytes_read = handle.read(&mut buf).unwrap_or(0) as u64;
+        let mut buf = Vec::with_capacity(strings_size as usize);
+        let bytes_read = strings_file.read_to_end(&mut buf).unwrap_or(0) as u64;
         assert!(
             bytes_read == strings_size,
             "Failed to read offsets file, read {:?} out of {:?}",
             bytes_read,
             strings_size,
         );
-        out_file.write_all(buf.as_slice()).unwrap();
+        out_file.write_all(&buf).unwrap();
+        out_file.flush().expect("Failed to flush strings!");
         bytes_written += bytes_read;
 
         bytes_written
@@ -329,15 +331,14 @@ pub fn compile(queries_path: &str, out_file_path: &str) -> Result<(), Error> {
         })
         .collect();
 
-    let mut query_idx: u64 = 0;
     let mut str_vec_writer = StrVecWriter::init();
     let mut pb = ProgressBar::new(query_files.len() as u64);
     for (file_name, query_file) in query_files.into_iter() {
         let reader = BufReader::with_capacity(5 * 1024 * 1024, query_file);
         for line in reader.lines() {
             let line = line.unwrap();
-            let (_, _, query) = match parse_query_line(query_idx, &line) {
-                Ok((query_id, query_type, query)) => (query_id, query_type, query),
+            let (_, query) = match parse_query_line(&line) {
+                Ok((query_type, query)) => (query_type, query),
                 Err(e) => {
                     println!(
                         "Read error: {:?}, line: {:?}, file: {:?}",
@@ -349,13 +350,13 @@ pub fn compile(queries_path: &str, out_file_path: &str) -> Result<(), Error> {
                 }
             };
             str_vec_writer.add(query);
-            query_idx += 1;
         }
         pb.inc();
     }
-    str_vec_writer.write_to_file(&Path::new(&out_file_path));
-
     pb.finish_print("done");
+
+    let bytes_written = str_vec_writer.write_to_file(&Path::new(&out_file_path));
+    println!("total bytes written: {:?}", bytes_written);
 
     Ok(())
 }

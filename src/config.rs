@@ -13,6 +13,7 @@ pub struct Config {
     pub terms_relevance_file: String,
     pub thread_pool_size: usize,
     pub stopwords_file: String,
+    pub i2q_file: String,
 }
 
 impl Config {
@@ -28,7 +29,7 @@ impl Config {
     pub fn init(path: String) -> Self {
         let config_content = match Config::load_config_file(&path) {
             Ok(config) => config,
-            Err(err) => panic!("Failed to load {}/confg.json, err: {:?}", path, err),
+            Err(err) => panic!("Failed to load {}/config.json, err: {:?}", path, err),
         };
 
         let config: Value = serde_json::from_str(&config_content).unwrap();
@@ -55,12 +56,17 @@ impl Config {
 
         let terms_relevance_file = match config["terms_relevance_file"] {
             Value::String(ref terms_relevance_file) => terms_relevance_file.as_str(),
-            _ => panic!("Failed to load terms relevance file from the config!"),
+            _ => panic!("Failed to load terms relevance file name from the config!"),
         };
 
         let stopwords_file = match config["stopwords_file"] {
             Value::String(ref stopwords_file) => stopwords_file.as_str(),
-            _ => panic!("Failed to load stopwords name from the config!"),
+            _ => panic!("Failed to load stopwords file name from the config!"),
+        };
+
+        let i2q_file = match config["i2q_file"] {
+            Value::String(ref i2q_file) => i2q_file.as_str(),
+            _ => panic!("Failed to load i2q file name from the config!"),
         };
 
         let thread_pool_size = match config["thread_pool_size"] {
@@ -75,6 +81,7 @@ impl Config {
             shard_size: shard_size as usize,
             terms_relevance_file: terms_relevance_file.to_string(),
             stopwords_file: stopwords_file.to_string(),
+            i2q_file: i2q_file.to_string(),
             thread_pool_size: thread_pool_size as usize,
         }
     }

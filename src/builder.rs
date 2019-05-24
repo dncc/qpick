@@ -18,6 +18,8 @@ use config;
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 
+use util::{BRED, BYELL, ECOL};
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Qid {
     // query id: is equal to:
@@ -171,8 +173,12 @@ pub fn build_shard(
     let mut qcount: u64 = 0;
     let mut invert: HashMap<String, Bucket> = HashMap::new();
 
-    let f = try!(File::open(input_file));
-    let reader = BufReader::with_capacity(5 * 1024 * 1024, &f);
+    let fin = match File::open(input_file) {
+        Ok(fin) => fin,
+        Err(_) => panic!([BYELL, "File not found: ", ECOL, BRED, input_file, ECOL].join("")),
+    };
+    let reader = BufReader::with_capacity(5 * 1024 * 1024, &fin);
+
     for line in reader.lines() {
         let line = match line {
             Ok(line) => line,
@@ -184,13 +190,13 @@ pub fn build_shard(
 
         let mut split = line.trim().split("\t");
 
-        let pqid = match split.next() {
-            Some(pqid) => match pqid.parse::<u32>() {
+        let shard_qid = match split.next() {
+            Some(shard_qid) => match shard_qid.parse::<u32>() {
                 Ok(n) => n,
                 Err(err) => {
                     println!(
                         "Shard {:?} - failed to parse query id {:?}: {:?}",
-                        iid, pqid, err
+                        iid, shard_qid, err
                     );
                     continue;
                 }
@@ -207,7 +213,7 @@ pub fn build_shard(
                 Err(err) => {
                     println!(
                         "Shard {:?} - failed to parse query id {:?}: {:?}",
-                        iid, pqid, err
+                        iid, shard_qid, err
                     );
                     continue;
                 }
@@ -248,7 +254,7 @@ pub fn build_shard(
             .or_insert(Bucket::with_capacity(bucket_size));
 
         bucket.push(Qid {
-            id: pqid,
+            id: shard_qid,
             reminder: reminder,
             sc: nsc,
         });
@@ -284,16 +290,24 @@ pub fn build_shard(
         .unwrap();
 
     let mut cursor: u64 = 0;
-    for (key, bucket) in vinvert.into_iter() {
-        let n = write_bucket(
-            index_file,
-            cursor * id_size as u64,
-            &bucket.to_vec(),
-            id_size,
-        );
-        let val = util::elegant_pair(cursor, n).unwrap();
-        build.insert(key, val).unwrap();
-        cursor += n;
+
+    if vinvert.len() == 0 {
+        // write a dummy entry if shard is empty, otherwise Mmap:map(shard)
+        // complains with: "memory map must have a non-zero length"
+        // TODO move to build.finish()
+        write_bucket(index_file, 0, &vec![(0, 0, 0)], id_size);
+    } else {
+        for (key, bucket) in vinvert.into_iter() {
+            let n = write_bucket(
+                index_file,
+                cursor * id_size as u64,
+                &bucket.to_vec(),
+                id_size,
+            );
+            let val = util::elegant_pair(cursor, n).unwrap();
+            build.insert(key, val).unwrap();
+            cursor += n;
+        }
     }
 
     // Finish construction of the map and flush its contents to disk.

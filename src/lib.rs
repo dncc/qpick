@@ -16,6 +16,7 @@ use std::io;
 use std::sync::Arc;
 use std::fs::OpenOptions;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::cmp::{Ordering, PartialOrd};
 use std::collections::{HashMap, HashSet};
 
@@ -117,14 +118,24 @@ pub struct DistanceResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SearchResult {
-    pub id: u64,
+pub struct SearchShardResult {
+    pub id: u64, // query id unique globally
     pub sc: f32,
+    pub query: Option<String>,
+    pub sh_id: u8,   // shard id
+    pub sh_qid: u32, // query id unique on a shard level
 }
 
-struct ShardIds {
-    ids: Vec<SearchResult>,
+struct ShardResults {
+    results: Vec<SearchShardResult>,
     norm: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchResult {
+    pub id: u64, // query id unique globally
+    pub sc: f32,
+    pub query: Option<String>,
 }
 
 impl PartialOrd for SearchResult {
@@ -141,168 +152,6 @@ impl PartialEq for SearchResult {
     fn eq(&self, other: &SearchResult) -> bool {
         self.sc == other.sc
     }
-}
-
-// -- simd
-use std::mem;
-
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
-
-#[cfg(target_arch = "x86")]
-use std::arch::x86::*;
-
-#[target_feature(enable = "avx")]
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[inline]
-#[allow(unsafe_code)]
-unsafe fn get_query_ids_with_simd(
-    ngrams: &HashMap<String, f32>,
-    map: &fst::Map,
-    ifd: &memmap::Mmap,
-    id_size: usize,
-) -> Result<ShardIds, Error> {
-    // normalization constant for tf-idf score
-    let mut norm: f32 = 0.0;
-    let n = *get_shard_size() as f32;
-    let nr_shards = *get_nr_shards();
-    let bucket_size = *get_bucket_size();
-
-    // total length for ids vector
-    let mut total_len: usize = 0;
-    // collect ngram's term relevance, bucket address, bucket length and idf score
-    // also, compute normalization constant
-    let ntr_addr_len_idf_vec: Vec<(u8, usize, usize, f32)> = ngrams
-        .iter()
-        .map(|(ngram, ngram_tr)| {
-            // IDF score for the ngram
-            let mut idf: f32 = n.log(2.0);
-            let ntr = (*ngram_tr * 100.0).round() as u8;
-            let (addr, len) = match get_addr_and_len(ngram, &map) {
-                // returns physical memory address and length of the vector (not a number of bytes)
-                Some((addr, len)) => {
-                    total_len += len as usize;
-                    // IDF for existing ngram
-                    idf = (n / len as f32).log(2.0);
-                    (addr as usize, util::min(len as usize, bucket_size))
-                }
-                None => {
-                    // IDF ngram that occurs for the 1st time
-                    (0, 0)
-                }
-            };
-            // normalization update
-            norm += ngram_tr * idf;
-            (ntr, addr, len, idf)
-        })
-        .collect::<Vec<(u8, usize, usize, f32)>>();
-
-    // allocate ids vector with exact (total_len) capacity
-    let mut ids: Vec<SearchResult> = Vec::with_capacity(total_len);
-    ids.reserve_exact(total_len);
-
-    // -- start simd tf-idf calculation for each id
-    let _add_1 = _mm256_set1_ps(1.0);
-    let _div_100 = _mm256_set1_ps(100.0);
-
-    for (ntr, addr, len, idf) in ntr_addr_len_idf_vec {
-        if len == 0 {
-            continue;
-        }
-        let mem_addr = addr as usize * id_size;
-        let mut ids_arr: &[(u32, u8, u8)] = &read_bucket(ifd, mem_addr, len, id_size)[..len];
-
-        let _idf8 = _mm256_set1_ps(idf);
-        while ids_arr.len() >= 8 {
-            let (
-                (pqid0, rem0, trel0),
-                (pqid1, rem1, trel1),
-                (pqid2, rem2, trel2),
-                (pqid3, rem3, trel3),
-                (pqid4, rem4, trel4),
-                (pqid5, rem5, trel5),
-                (pqid6, rem6, trel6),
-                (pqid7, rem7, trel7),
-            ) = (
-                ids_arr[0],
-                ids_arr[1],
-                ids_arr[2],
-                ids_arr[3],
-                ids_arr[4],
-                ids_arr[5],
-                ids_arr[6],
-                ids_arr[7],
-            );
-
-            let _trel = _mm256_div_ps(
-                _mm256_set_ps(
-                    util::min(trel0, ntr) as f32,
-                    util::min(trel1, ntr) as f32,
-                    util::min(trel2, ntr) as f32,
-                    util::min(trel3, ntr) as f32,
-                    util::min(trel4, ntr) as f32,
-                    util::min(trel5, ntr) as f32,
-                    util::min(trel6, ntr) as f32,
-                    util::min(trel7, ntr) as f32,
-                ),
-                _div_100,
-            );
-
-            let tf_idf: (f32, f32, f32, f32, f32, f32, f32, f32) =
-                mem::transmute(_mm256_mul_ps(_trel, _idf8));
-
-            ids.extend_from_slice(&[
-                SearchResult {
-                    id: util::pqid2qid(pqid0 as u64, rem0, nr_shards),
-                    sc: tf_idf.0,
-                },
-                SearchResult {
-                    id: util::pqid2qid(pqid1 as u64, rem1, nr_shards),
-                    sc: tf_idf.1,
-                },
-                SearchResult {
-                    id: util::pqid2qid(pqid2 as u64, rem2, nr_shards),
-                    sc: tf_idf.2,
-                },
-                SearchResult {
-                    id: util::pqid2qid(pqid3 as u64, rem3, nr_shards),
-                    sc: tf_idf.3,
-                },
-                SearchResult {
-                    id: util::pqid2qid(pqid4 as u64, rem4, nr_shards),
-                    sc: tf_idf.4,
-                },
-                SearchResult {
-                    id: util::pqid2qid(pqid5 as u64, rem5, nr_shards),
-                    sc: tf_idf.5,
-                },
-                SearchResult {
-                    id: util::pqid2qid(pqid6 as u64, rem6, nr_shards),
-                    sc: tf_idf.6,
-                },
-                SearchResult {
-                    id: util::pqid2qid(pqid7 as u64, rem7, nr_shards),
-                    sc: tf_idf.7,
-                },
-            ]);
-
-            ids_arr = &ids_arr[8..];
-        }
-        // compute tf-idf for remining ids if any
-        for &(pqid, rem, trel) in ids_arr.iter() {
-            let tr = util::min(trel, ntr) as f32 / 100.0;
-            ids.push(SearchResult {
-                id: util::pqid2qid(pqid as u64, rem, nr_shards),
-                sc: tr * idf,
-            });
-        }
-    }
-    // -- end simd
-
-    Ok(ShardIds {
-        ids: ids,
-        norm: norm,
-    })
 }
 
 #[inline]
@@ -329,20 +178,191 @@ fn get_idfs(ngrams: &HashMap<String, f32>, map: &fst::Map) -> HashMap<String, (f
     return idfs;
 }
 
+// --- simd
+use std::mem;
+
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+
+#[cfg(target_arch = "x86")]
+use std::arch::x86::*;
+
+#[target_feature(enable = "avx")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+#[allow(unsafe_code)]
+unsafe fn get_query_ids_with_simd(
+    ngrams: &HashMap<String, f32>,
+    map: &fst::Map,
+    ifd: &memmap::Mmap,
+    id_size: usize,
+) -> Result<ShardResults, Error> {
+    // normalization constant for tf-idf score
+    let mut norm: f32 = 0.0;
+    let n = *get_shard_size() as f32;
+    let nr_shards = *get_nr_shards();
+    let bucket_size = *get_bucket_size();
+
+    // max capacity for results vector
+    let mut results: Vec<SearchShardResult> = Vec::with_capacity(ngrams.len() * bucket_size);
+    results.reserve_exact(ngrams.len() * bucket_size);
+
+    for (ngram, ngram_tr) in ngrams {
+        // IDF score for the ngram
+        let mut idf: f32 = n.log(2.0);
+        if let Some((addr, len)) = get_addr_and_len(ngram, &map) {
+            // IDF for existing ngram
+            idf = (n / len as f32).log(2.0);
+
+            // -- start simd tf-idf calculation for each id
+            let _idf8 = _mm256_set1_ps(idf);
+
+            let mem_addr = addr as usize * id_size;
+            let mut ids_arr: &[(u32, u8, u8)] = &read_bucket(ifd, mem_addr, len as usize, id_size);
+            // println!("ids_arr: {:?}", ids_arr);
+
+            while ids_arr.len() >= 8 {
+                let (
+                    (shard_query_id0, shard_id0, trel0),
+                    (shard_query_id1, shard_id1, trel1),
+                    (shard_query_id2, shard_id2, trel2),
+                    (shard_query_id3, shard_id3, trel3),
+                    (shard_query_id4, shard_id4, trel4),
+                    (shard_query_id5, shard_id5, trel5),
+                    (shard_query_id6, shard_id6, trel6),
+                    (shard_query_id7, shard_id7, trel7),
+                ) = (
+                    ids_arr[0],
+                    ids_arr[1],
+                    ids_arr[2],
+                    ids_arr[3],
+                    ids_arr[4],
+                    ids_arr[5],
+                    ids_arr[6],
+                    ids_arr[7],
+                );
+
+                let _trel = _mm256_set_ps(
+                    util::min(trel0 as f32 / 100.0, *ngram_tr) as f32,
+                    util::min(trel1 as f32 / 100.0, *ngram_tr) as f32,
+                    util::min(trel2 as f32 / 100.0, *ngram_tr) as f32,
+                    util::min(trel3 as f32 / 100.0, *ngram_tr) as f32,
+                    util::min(trel4 as f32 / 100.0, *ngram_tr) as f32,
+                    util::min(trel5 as f32 / 100.0, *ngram_tr) as f32,
+                    util::min(trel6 as f32 / 100.0, *ngram_tr) as f32,
+                    util::min(trel7 as f32 / 100.0, *ngram_tr) as f32,
+                );
+
+                // println!("trel {:?}", _trel);
+
+                let tf_idf: (f32, f32, f32, f32, f32, f32, f32, f32) =
+                    mem::transmute(_mm256_mul_ps(_trel, _idf8));
+
+                // println!("tf_idf {:?}", tf_idf);
+
+                let result_slice = &[
+                    SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id0 as u64, shard_id0, nr_shards),
+                        sc: tf_idf.7,
+                        query: None,
+                        sh_id: shard_id0,
+                        sh_qid: shard_query_id0,
+                    },
+                    SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id1 as u64, shard_id1, nr_shards),
+                        sc: tf_idf.6,
+                        query: None,
+                        sh_id: shard_id1,
+                        sh_qid: shard_query_id1,
+                    },
+                    SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id2 as u64, shard_id2, nr_shards),
+                        sc: tf_idf.5,
+                        query: None,
+                        sh_id: shard_id2,
+                        sh_qid: shard_query_id2,
+                    },
+                    SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id3 as u64, shard_id3, nr_shards),
+                        sc: tf_idf.4,
+                        query: None,
+                        sh_id: shard_id3,
+                        sh_qid: shard_query_id3,
+                    },
+                    SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id4 as u64, shard_id4, nr_shards),
+                        sc: tf_idf.3,
+                        query: None,
+                        sh_id: shard_id4,
+                        sh_qid: shard_query_id4,
+                    },
+                    SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id5 as u64, shard_id5, nr_shards),
+                        sc: tf_idf.2,
+                        query: None,
+                        sh_id: shard_id5,
+                        sh_qid: shard_query_id5,
+                    },
+                    SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id6 as u64, shard_id6, nr_shards),
+                        sc: tf_idf.1,
+                        query: None,
+                        sh_id: shard_id6,
+                        sh_qid: shard_query_id6,
+                    },
+                    SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id7 as u64, shard_id7, nr_shards),
+                        sc: tf_idf.0,
+                        query: None,
+                        sh_id: shard_id7,
+                        sh_qid: shard_query_id7,
+                    },
+                ];
+                results.extend_from_slice(result_slice);
+
+                ids_arr = &ids_arr[8..];
+            }
+
+            // compute tf-idf for remining results if any
+            for &(shard_query_id, shard_id, trel) in ids_arr.iter() {
+                let tr = util::min((trel as f32) / 100.0, *ngram_tr);
+                results.push(SearchShardResult {
+                    id: util::shard_id_2_query_id(shard_query_id as u64, shard_id, nr_shards),
+                    sc: tr * idf,
+                    query: None,
+                    sh_id: shard_id,
+                    sh_qid: shard_query_id,
+                });
+            }
+        }
+
+        norm += *ngram_tr * idf;
+    }
+
+    // -- end simd
+    Ok(ShardResults {
+        results: results,
+        norm: norm,
+    })
+}
+
+// --- simd end
+
 #[inline]
 fn get_query_ids_wo_simd(
     ngrams: &HashMap<String, f32>,
     map: &fst::Map,
     ifd: &memmap::Mmap,
     id_size: usize,
-) -> Result<ShardIds, Error> {
+) -> Result<ShardResults, Error> {
     let n = *get_shard_size() as f32;
     let nr_shards = *get_nr_shards();
     let bucket_size = *get_bucket_size();
 
     let mut norm: f32 = 0.0;
-    let mut ids: Vec<SearchResult> = vec![];
-    for (ngram, ntr) in ngrams {
+    let mut results: Vec<SearchShardResult> = vec![];
+
+    for (ngram, ngram_tr) in ngrams {
         // IDF score for the ngram
         let mut idf: f32;
         match get_addr_and_len(ngram, &map) {
@@ -352,11 +372,15 @@ fn get_query_ids_wo_simd(
                 idf = (n / len as f32).log(2.0);
                 let mem_addr = addr as usize * id_size;
                 let len = util::min(len as usize, bucket_size);
-                for &(pqid, rem, trel) in read_bucket(ifd, mem_addr, len, id_size).iter() {
-                    let tr = util::min((trel as f32) / 100.0, *ntr);
-                    ids.push(SearchResult {
-                        id: util::pqid2qid(pqid as u64, rem, nr_shards),
+                let ids_arr = read_bucket(ifd, mem_addr, len, id_size);
+                for &(shard_query_id, shard_id, trel) in ids_arr.iter() {
+                    let tr = util::min((trel as f32) / 100.0, *ngram_tr);
+                    results.push(SearchShardResult {
+                        id: util::shard_id_2_query_id(shard_query_id as u64, shard_id, nr_shards),
                         sc: tr * idf,
+                        query: None,
+                        sh_id: shard_id,
+                        sh_qid: shard_query_id,
                     });
                 }
             }
@@ -366,10 +390,11 @@ fn get_query_ids_wo_simd(
             }
         }
         // normalization score
-        norm += ntr * idf;
+        norm += ngram_tr * idf;
     }
-    Ok(ShardIds {
-        ids: ids,
+
+    Ok(ShardResults {
+        results: results,
         norm: norm,
     })
 }
@@ -380,7 +405,7 @@ fn get_query_ids(
     map: &fst::Map,
     ifd: &memmap::Mmap,
     id_size: usize,
-) -> Result<ShardIds, Error> {
+) -> Result<ShardResults, Error> {
     if cfg!(target_feature = "avx") {
         unsafe { get_query_ids_with_simd(ngrams, map, ifd, id_size) }
     } else {
@@ -401,6 +426,7 @@ pub struct Qpick {
 pub struct Shard {
     map: fst::Map,
     shard: Mmap,
+    i2q: Option<stringvec::StrVec>,
 }
 
 #[derive(Debug)]
@@ -495,19 +521,23 @@ impl Qpick {
                 Err(_) => panic!("Failed to load index map: {}!", &map_path),
             };
 
-            let shard = unsafe {
-                Mmap::map(&OpenOptions::new()
-                    .read(true)
-                    .open(format!("{}/shard.{}", path, i))
-                    .unwrap())
-                    .unwrap()
-            };
+            let shard_name = format!("{}/shard.{}", path, i);
+            let shard_file = OpenOptions::new().read(true).open(shard_name).unwrap();
+            let shard = unsafe { Mmap::map(&shard_file).unwrap() };
 
             advise_ram(&shard[..]).expect(&format!("Advisory failed for shard {}", i));
+
+            let i2q_path = PathBuf::from(&path).join(&format!("{}.{}", c.i2q_file, i));
+            let i2q = if i2q_path.exists() {
+                Some(stringvec::StrVec::load(&i2q_path))
+            } else {
+                None
+            };
 
             shards.push(Shard {
                 shard: shard,
                 map: map,
+                i2q: i2q,
             });
         }
 
@@ -560,7 +590,7 @@ impl Qpick {
         count: Option<usize>,
     ) -> Result<Vec<SearchResult>, Error> {
         let shards_ngrams = self.shard_ngrams(ngrams);
-        let shard_ids: Vec<ShardIds> = shards_ngrams
+        let shard_results: Vec<ShardResults> = shards_ngrams
             .par_iter()
             .map(|(shard_id, ngrams)| {
                 get_query_ids(
@@ -573,47 +603,40 @@ impl Qpick {
             .collect();
 
         let mut norm: f32 = 0.0;
-        let mut hdata: HashMap<u64, f32> = HashMap::new();
-        for sh_id in shard_ids.iter() {
-            for s in sh_id.ids.iter() {
-                *hdata.entry(s.id).or_insert(0.0) += s.sc;
+        // query_id -> (shard_query_id, shard_id)
+        let mut ids_map: HashMap<u64, (u32, u8)> = HashMap::new();
+        // query_id -> score
+        let mut res_data: HashMap<u64, f32> = HashMap::new();
+
+        for sh_res in shard_results.iter() {
+            for r in sh_res.results.iter() {
+                ids_map.entry(r.id).or_insert((r.sh_qid, r.sh_id));
+                *res_data.entry(r.id).or_insert(0.0) += r.sc;
             }
-            norm += sh_id.norm;
+            norm += sh_res.norm;
         }
 
-        let mut vdata: Vec<SearchResult> = hdata
+        let mut res_data: Vec<SearchResult> = res_data
             .par_iter()
             .filter(|(_, sc)| *sc / norm > LOW_SIM_THRESH)
-            .map(|(id, sc)| SearchResult {
-                id: *id,
-                sc: util::max(1.0 - *sc / norm, 0.0),
+            .map(|(id, sc)| {
+                let (sh_qid, sh_id) = ids_map.get(id).unwrap();
+                SearchResult {
+                    id: *id,
+                    sc: util::max(1.0 - *sc / norm, 0.0),
+                    query: if let Some(ref i2q) = &self.shards[*sh_id as usize].i2q {
+                        Some(i2q[*sh_qid as usize].to_string())
+                    } else {
+                        None
+                    },
+                }
             })
             .collect();
-        vdata.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
-        vdata.truncate(count.unwrap_or(100)); //TODO put into config
 
-        Ok(vdata)
-    }
+        res_data.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
+        res_data.truncate(count.unwrap_or(100)); //TODO put into config
 
-    pub fn get_str(&self, query: &str, count: u32) -> String {
-        let mut res: Vec<(u64, f32)> = self.get(query, 30 * count)
-            .into_iter()
-            .map(|s| (s.id, s.sc))
-            .collect();
-        res.truncate(count as usize);
-
-        serde_json::to_string(&res).unwrap()
-    }
-
-    pub fn nget_str(&self, queries: &str, count: u32) -> String {
-        let qvec: Vec<String> = serde_json::from_str(queries).unwrap();
-        let mut res: Vec<(u64, f32)> = self.nget(&qvec, 30 * count)
-            .into_iter()
-            .map(|s| (s.id, s.sc))
-            .collect();
-        res.truncate(count as usize);
-
-        serde_json::to_string(&res).unwrap()
+        Ok(res_data)
     }
 
     pub fn get_distances(&self, query: &str, candidates: &Vec<String>) -> Vec<DistanceResult> {
@@ -677,26 +700,6 @@ impl Qpick {
         }
     }
 
-    pub fn nget(&self, qvec: &Vec<String>, count: u32) -> Vec<SearchResult> {
-        if qvec.len() == 0 || count == 0 {
-            return vec![];
-        }
-
-        let ref mut ngrams: HashMap<String, f32> = HashMap::new();
-        for query in qvec.iter() {
-            for (ngram, sc) in
-                ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q)
-            {
-                ngrams.insert(ngram, sc);
-            }
-        }
-
-        match self.get_ids(ngrams, Some(count as usize)) {
-            Ok(ids) => ids,
-            Err(err) => panic!("Failed to get ids with: {message}", message = err),
-        }
-    }
-
     pub fn merge(&self) -> Result<(), Error> {
         println!("Merging index maps from: {:?}", &self.path);
         merge::merge(&self.path, self.config.nr_shards as usize)
@@ -709,11 +712,8 @@ impl Qpick {
     pub fn get_dist_results(&self, query: &str, candidates: &Vec<String>) -> DistResults {
         DistResults::new(self.get_distances(query, candidates).into_iter())
     }
-
-    pub fn nget_search_results(&self, qvec: &Vec<String>, count: u32) -> SearchResults {
-        SearchResults::new(self.nget(qvec, count).into_iter())
-    }
 }
 
 #[allow(dead_code)]
 fn main() {}
+// TODO clean nget_str etc... fix python bindings to show search results,  rename get to search

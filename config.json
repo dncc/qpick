@@ -5,5 +5,6 @@
     "shard_size": 250000000,
     "terms_relevance_file": "terms_relevance.fst",
     "stopwords_file": "stopwords.txt",
-    "thread_pool_size": 2
+    "thread_pool_size": 1,
+    "i2q_file": "i2q"
 }

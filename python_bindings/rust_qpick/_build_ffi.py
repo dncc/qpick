@@ -8,8 +8,6 @@ ffi.cdef("""
     Qpick* qpick_init(char*);
     Qpick* qpick_init_with_shard_range(char*, uint32_t, uint32_t);
     void qpick_free(Qpick*);
-    char* qpick_get_as_string(Qpick*, char*, uint32_t);
-    char* qpick_nget_as_string(Qpick*, char*, uint32_t);
     void string_free(char*);
 
     /**
@@ -18,6 +16,7 @@ ffi.cdef("""
     typedef struct {
         uint64_t  qid;
         float     sc;
+        char*     query;
     } QpickSearchItem;
 
     typedef struct SearchResults SearchResults;
@@ -29,14 +28,12 @@ ffi.cdef("""
     void qpick_search_item_free(QpickSearchItem*);
 
     /**
-       nget API
+       string vec
     **/
     typedef struct StringVec StringVec;
     StringVec* string_vec_init();
     void string_vec_free(StringVec*);
     void string_vec_push(StringVec*, char*);
-
-    SearchResults* qpick_nget(Qpick*, StringVec*, uint32_t);
 
     /**
        Distance Iterator
@@ -57,7 +54,7 @@ ffi.cdef("""
     /**
         shard, index, compile_i2q API
     **/
-    void qpick_shard(char*, uint32_t, char*, uint32_t, StringVec*);
+    void qpick_shard(char*, uint32_t, char*, StringVec*);
     void qpick_compile_i2q(char*, char*);
     void qpick_index(char*, uint32_t, uint32_t, char*);
 

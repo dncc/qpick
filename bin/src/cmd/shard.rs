@@ -6,7 +6,7 @@ use qpick::shard;
 const USAGE: &'static str = "
 Creates ngram shards from an input directory.
 Usage:
-    qpick shard [options] <path> <nr-shards> <output-dir> <prefixes> <concurrency>
+    qpick shard [options] <path> <nr-shards> <output-dir> <prefixes>
     qpick shard --help
 Options:
     -h, --help  path: is a directory path to query files (.gz).
@@ -20,18 +20,12 @@ struct Args {
     arg_nr_shards: usize,
     arg_output_dir: String,
     arg_prefixes: Option<String>,
-    arg_concurrency: Option<u32>,
 }
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
     let args: Args = Docopt::new(USAGE)
         .and_then(|d| d.argv(&argv).deserialize())
         .unwrap_or_else(|e| e.exit());
-
-    let mut concurrency = args.arg_nr_shards;
-    if let Some(c) = args.arg_concurrency {
-        concurrency = c as usize;
-    }
 
     let prefixes = match args.arg_prefixes {
         Some(prefs) => prefs,
@@ -50,7 +44,6 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         &args.arg_path,
         args.arg_nr_shards,
         &args.arg_output_dir,
-        concurrency,
         &prefixes,
     );
     println!("{:?}", r);

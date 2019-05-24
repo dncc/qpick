@@ -4,38 +4,40 @@ HOME_REMOTE_PATH := ~/${USER}
 PROJECT_REMOTE_PATH := ~/${USER}/${PROJECT_DIR}
 INDEX_REMOTE_PATH := /raid/${USER}/qpick-1b-test
 QPICK_BRANCH := i2q
-TMUXW := 1
+TMUXW := 0
 
 .PHONY: install/req
 install/req:
 	ssh root@${IP} "tmux new -d -s qpick || true && tmux select-window -t qpick:${TMUXW} \
 										|| tmux new-window -n ${TMUXW} && \
+					tmux send -t qpick:${TMUXW} 'apt-get update && apt-get install -y libxml2-dev python3-pip' ENTER && \
+					tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH} && source env.sh' ENTER && \
 					tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH}/scripts' ENTER && \
-					tmux send -t qpick:${TMUXW} 'apt-get install libxml2-dev' ENTER && \
-					tmux send -t qpick:${TMUXW} 'pip install pip --upgrade --ignore-installed' ENTER && \
-					tmux send -t qpick:${TMUXW} 'PIP_INDEX_URL=http://pypi.cliqz.discover:8080/simple/ \
-									   PIP_TRUSTED_HOST=pypi.cliqz.discover \
-									   pip install -v -q -r requirements.txt --ignore-installed' ENTER && \
-					tmux send -t qpick:${TMUXW} 'export VIRTUALENVWRAPPER_PYTHON=/usr/bin/python3' ENTER && \
-					tmux send -t qpick:${TMUXW} 'python3 pip install virtualenvwrapper' ENTER && \
-					tmux send -t qpick:${TMUXW} 'source virtualenvwrapper.sh && workon -c p3' ENTER"
+					tmux send -t qpick:${TMUXW} 'pip3 install pip --upgrade --ignore-installed' ENTER && \
+					tmux send -t qpick:${TMUXW} 'PIP_INDEX_URL=\$$PIP_INDEX_URL \
+									   PIP_TRUSTED_HOST=\$$PIP_TRUSTED_HOST \
+									   pip3 install -v -q -r requirements.txt --ignore-installed' ENTER"
 
-.PHONY: download/test/data
-download/test/data:
+.PHONY: download/data
+download/data:
 	ssh root@${IP} "mkdir -p ${INDEX_REMOTE_PATH} && \
-					tmux new -d -s qpick || true && tmux select-window -t qpick:${TMUXW}
+					tmux new -d -s qpick || true && tmux select-window -t qpick:${TMUXW} \
 										|| tmux new-window -n ${TMUXW} && \
-					tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH} && source index_s3.sh' ENTER && \
+					tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH} && source env.sh' ENTER && \
 					tmux send -t qpick:${TMUXW} 'cd ${INDEX_REMOTE_PATH}' ENTER && \
-					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3/qpick_input.txt .' ENTER && \
-					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3/i2q/i2q.kv .' ENTER && \
-					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3/gt/tq32.merged .' ENTER"
+					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_DATA/qpick_input.woid.gz .' ENTER && \
+					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_DATA/gt/tq32.merged .' ENTER"
 
-.PHONY: download/pages
-download/pages:
-	ssh root@${IP} "mkdir -p ${PROJECT_REMOTE_PATH}/pages && cd ${PROJECT_REMOTE_PATH}/pages && \
-					S3=s3://cliqz-data-pipeline/test/partial_merged_snippets/urls-dragan/de/20190404/ && \
-					aws s3 cp --recursive ${S3} ."
+.PHONY: download/ws
+download/ws:
+	ssh root@${IP} "mkdir -p ${INDEX_REMOTE_PATH}/index && \
+					tmux new -d -s qpick || true && tmux select-window -t qpick:${TMUXW} \
+										|| tmux new-window -n ${TMUXW} && \
+					tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH} && source env.sh' ENTER && \
+					tmux send -t qpick:${TMUXW} 'cd ${INDEX_REMOTE_PATH}/index' ENTER && \
+					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_QPICK/stopwords.txt .' ENTER && \
+					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_QPICK/config.json .' ENTER && \
+					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_QPICK/terms_relevance.fst .' ENTER"
 
 .PHONY: qpick/rsync
 qpick/rsync:
@@ -58,34 +60,33 @@ qpick/clone:
 					rm -rf qpick && \
 					git clone https://github.com/dncc/qpick.git && cd qpick && git checkout ${QPICK_BRANCH}"
 
-.PHONY: qpick/dep
-qpick/dep:
+.PHONY: ssh/build/dep
+ssh/build/dep:
 	ssh root@${IP} "cd ${HOME_REMOTE_PATH}/qpick && \
 	apt-get install libffi-dev && \
 	curl https://sh.rustup.rs -sSf | sh -s -- -y"
 
-.PHONY: qpick/build
-qpick/build:
+.PHONY: ssh/build/qpick
+ssh/build/qpick:
 	ssh root@${IP} "PATH=~/.cargo/bin:${PATH} && \
 	cd ${HOME_REMOTE_PATH}/qpick && \
 	cargo build --release && \
 	cargo build --release --manifest-path ./bin/Cargo.toml --verbose"
 
-.PHONY: pyqpick/build
-pyqpick/build:
+.PHONY: ssh/build/pyqpick
+ssh/build/pyqpick:
 	ssh root@${IP} "PATH=~/.cargo/bin:${PATH} && \
 	cd ${HOME_REMOTE_PATH}/qpick/python_bindings && \
 	python setup.py install"
 
-PHONY: qpick/install
-qpick/install: qpick/clone qpick/dep qpick/build pyqpick/build
+PHONY: ssh/install/test
+ssh/install/test: qpick/rsync install/req download/data download/ws ssh/build/dep ssh/build/qpick ssh/build/pyqpick
 
-PHONY: install
-install: rsync install/req download/ws qpick/install
-
+PHONY: ssh/install/branch
+ssh/install/qpick: qpick/clone ssh/build/dep ssh/build/qpick ssh/build/pyqpick
 
 # ================ localhost =================
-.PHONY: build/dep
+.PHONY: qpick/dep
 build/dep:
 	sudo apt-get install libffi-dev
 	curl https://sh.rustup.rs -sSf | sh -s -- -y

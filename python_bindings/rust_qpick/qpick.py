@@ -45,9 +45,10 @@ class QpickSearchResults(QpickResults):
 
         qid = itm.qid
         sc = itm.sc
+        query = ffi.string(itm.query).decode('utf8')
         self._free_item_fn(itm)
 
-        return (qid, sc)
+        return (qid, sc, query)
 
 class QpickDistResults(QpickResults):
     def __next__(self):
@@ -77,6 +78,9 @@ class Qpick(object):
             if not os.path.isdir(dir_path):
                 raise Exception("%s is not a directory!" % dir_path)
 
+            if type(dir_path) == str:
+                dir_path = dir_path.encode('utf-8')
+
             if start_shard is not None and end_shard is not None:
                 if end_shard <= start_shard:
                     raise Exception("Index of the last shard has to be greater than the start index!")
@@ -92,35 +96,12 @@ class Qpick(object):
 
         self._ptr = ffi.gc(s, lib.qpick_free)
 
-    def get_as_string(self, query):
-        c_str = lib.qpick_get_as_string(self._ptr, query)
-        py_str = ffi.string(c_str).decode('utf8')
-        lib.string_free(c_str)
-        return py_str
-
     # qpick.get('a')
     def get(self, query, count=100):
         if type(query) == str:
             query = query.encode('utf-8')
 
         res_ptr = lib.qpick_get(self._ptr, query, count)
-        return QpickSearchResults(res_ptr,
-                                lib.qpick_search_iter_next,
-                                lib.qpick_search_results_free,
-                                lib.qpick_search_item_free)
-
-    # qpick.nget(['a', 'b', 'c'])
-    def nget(self, queries, count=100):
-        qvec = lib.string_vec_init()
-        qvec_ptr = ffi.gc(qvec, lib.string_vec_free)
-
-        for q in queries:
-            if type(q) == str:
-                q = q.encode('utf-8')
-            lib.string_vec_push(qvec_ptr, q)
-
-        res_ptr = lib.qpick_nget(self._ptr, qvec_ptr, count)
-
         return QpickSearchResults(res_ptr,
                                 lib.qpick_search_iter_next,
                                 lib.qpick_search_results_free,
@@ -147,10 +128,7 @@ class Qpick(object):
                                 lib.qpick_dist_item_free)
 
 
-def shard(file_path, nr_shards, output_dir, concurrency=None, prefixes=[]):
-    if not concurrency:
-        concurrency = nr_shards
-
+def shard(file_path, nr_shards, output_dir, prefixes=[]):
     if type(file_path) == str:
         file_path = file_path.encode()
 
@@ -164,7 +142,7 @@ def shard(file_path, nr_shards, output_dir, concurrency=None, prefixes=[]):
             p = p.encode('utf-8')
         lib.string_vec_push(pref_vec_ptr, p)
 
-    lib.qpick_shard(file_path, nr_shards, output_dir, concurrency, pref_vec_ptr)
+    lib.qpick_shard(file_path, nr_shards, output_dir, pref_vec_ptr)
 
 def compile_i2q(file_path, output_dir):
     if type(file_path) == str:

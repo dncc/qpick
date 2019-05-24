@@ -50,7 +50,19 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
     }
 
     let r = qpick.get(&args.arg_query, args.arg_count);
-    let v: Vec<(u64, f32)> = r.iter().map(|q| (q.id, q.sc)).collect();
+
+    let v: Vec<(u64, f32, String)> = r.iter()
+        .map(|r| {
+            let q = if let Some(ref query) = r.query {
+                query
+            } else {
+                ""
+            };
+
+            (r.id, r.sc, q.to_string())
+        })
+        .collect();
+
     println!("{:?}", v);
 
     Ok(())

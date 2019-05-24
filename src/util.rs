@@ -46,7 +46,7 @@ impl error::Error for ElegantPairError {
 pub type Result<T> = ::std::result::Result<T, ElegantPairError>;
 
 #[inline]
-pub fn qid2pqid(qid: u64, nr_shards: usize) -> (u64, u8) {
+pub fn query_id_2_shard_id(qid: u64, nr_shards: usize) -> (u64, u8) {
     assert!(nr_shards < 256);
     (
         qid >> (nr_shards as f32).log(2.0) as u64,
@@ -55,7 +55,7 @@ pub fn qid2pqid(qid: u64, nr_shards: usize) -> (u64, u8) {
 }
 
 #[inline]
-pub fn pqid2qid(pqid: u64, reminder: u8, nr_shards: usize) -> u64 {
+pub fn shard_id_2_query_id(pqid: u64, reminder: u8, nr_shards: usize) -> u64 {
     (pqid << (nr_shards as f32).log(2.0) as u64) + reminder as u64
 }
 
@@ -168,22 +168,38 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn qid2pqid_and_inv_test() {
+    fn query_id_2_shard_id_and_inv_test() {
         assert_eq!(
             499998000,
-            pqid2qid(qid2pqid(499998000, 32).0, qid2pqid(499998000, 32).1, 32)
+            shard_id_2_query_id(
+                query_id_2_shard_id(499998000, 32).0,
+                query_id_2_shard_id(499998000, 32).1,
+                32
+            )
         );
         assert_eq!(
             499998001,
-            pqid2qid(qid2pqid(499998001, 57).0, qid2pqid(499998001, 57).1, 57)
+            shard_id_2_query_id(
+                query_id_2_shard_id(499998001, 57).0,
+                query_id_2_shard_id(499998001, 57).1,
+                57
+            )
         );
         assert_eq!(
             499998011,
-            pqid2qid(qid2pqid(499998011, 73).0, qid2pqid(499998011, 73).1, 73)
+            shard_id_2_query_id(
+                query_id_2_shard_id(499998011, 73).0,
+                query_id_2_shard_id(499998011, 73).1,
+                73
+            )
         );
         assert_eq!(
             499998111,
-            pqid2qid(qid2pqid(499998111, 60).0, qid2pqid(499998111, 60).1, 60)
+            shard_id_2_query_id(
+                query_id_2_shard_id(499998111, 60).0,
+                query_id_2_shard_id(499998111, 60).1,
+                60
+            )
         );
     }
 }
