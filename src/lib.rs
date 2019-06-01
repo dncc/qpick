@@ -63,7 +63,6 @@ use rayon::ThreadPoolBuilder;
 
 pub const LOW_SIM_THRESH: f32 = 0.099; // take only queries with similarity above
 
-make_static_var_and_getter!(get_bucket_size, BUCKET_SIZE, usize);
 make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
 make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
 make_static_var_and_getter!(get_thread_pool_size, THREAD_POOL_SIZE, usize);
@@ -178,152 +177,28 @@ fn get_idfs(ngrams: &HashMap<String, f32>, map: &fst::Map) -> HashMap<String, (f
     return idfs;
 }
 
-// --- simd
-use std::mem;
-
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
-
-#[cfg(target_arch = "x86")]
-use std::arch::x86::*;
-
-#[target_feature(enable = "avx")]
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline]
-#[allow(unsafe_code)]
-unsafe fn get_query_ids_with_simd(
+fn get_query_ids(
     ngrams: &HashMap<String, f32>,
     map: &fst::Map,
     ifd: &memmap::Mmap,
     id_size: usize,
 ) -> Result<ShardResults, Error> {
-    // normalization constant for tf-idf score
-    let mut norm: f32 = 0.0;
     let n = *get_shard_size() as f32;
     let nr_shards = *get_nr_shards();
-    let bucket_size = *get_bucket_size();
 
-    // max capacity for results vector
-    let mut results: Vec<SearchShardResult> = Vec::with_capacity(ngrams.len() * bucket_size);
-    results.reserve_exact(ngrams.len() * bucket_size);
+    let mut norm: f32 = 0.0;
+    let mut results: Vec<SearchShardResult> = vec![];
 
     for (ngram, ngram_tr) in ngrams {
-        // IDF score for the ngram
+        // IDF for the ngram that hasn't been seen before
         let mut idf: f32 = n.log(2.0);
+        // returns physical memory address and length of the vector (not a number of bytes)
         if let Some((addr, len)) = get_addr_and_len(ngram, &map) {
             // IDF for existing ngram
             idf = (n / len as f32).log(2.0);
-
-            // -- start simd tf-idf calculation for each id
-            let _idf8 = _mm256_set1_ps(idf);
-
             let mem_addr = addr as usize * id_size;
-            let mut ids_arr: &[(u32, u8, u8)] = &read_bucket(ifd, mem_addr, len as usize, id_size);
-            // println!("ids_arr: {:?}", ids_arr);
-
-            while ids_arr.len() >= 8 {
-                let (
-                    (shard_query_id0, shard_id0, trel0),
-                    (shard_query_id1, shard_id1, trel1),
-                    (shard_query_id2, shard_id2, trel2),
-                    (shard_query_id3, shard_id3, trel3),
-                    (shard_query_id4, shard_id4, trel4),
-                    (shard_query_id5, shard_id5, trel5),
-                    (shard_query_id6, shard_id6, trel6),
-                    (shard_query_id7, shard_id7, trel7),
-                ) = (
-                    ids_arr[0],
-                    ids_arr[1],
-                    ids_arr[2],
-                    ids_arr[3],
-                    ids_arr[4],
-                    ids_arr[5],
-                    ids_arr[6],
-                    ids_arr[7],
-                );
-
-                let _trel = _mm256_set_ps(
-                    util::min(trel0 as f32 / 100.0, *ngram_tr) as f32,
-                    util::min(trel1 as f32 / 100.0, *ngram_tr) as f32,
-                    util::min(trel2 as f32 / 100.0, *ngram_tr) as f32,
-                    util::min(trel3 as f32 / 100.0, *ngram_tr) as f32,
-                    util::min(trel4 as f32 / 100.0, *ngram_tr) as f32,
-                    util::min(trel5 as f32 / 100.0, *ngram_tr) as f32,
-                    util::min(trel6 as f32 / 100.0, *ngram_tr) as f32,
-                    util::min(trel7 as f32 / 100.0, *ngram_tr) as f32,
-                );
-
-                // println!("trel {:?}", _trel);
-
-                let tf_idf: (f32, f32, f32, f32, f32, f32, f32, f32) =
-                    mem::transmute(_mm256_mul_ps(_trel, _idf8));
-
-                // println!("tf_idf {:?}", tf_idf);
-
-                let result_slice = &[
-                    SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id0 as u64, shard_id0, nr_shards),
-                        sc: tf_idf.7,
-                        query: None,
-                        sh_id: shard_id0,
-                        sh_qid: shard_query_id0,
-                    },
-                    SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id1 as u64, shard_id1, nr_shards),
-                        sc: tf_idf.6,
-                        query: None,
-                        sh_id: shard_id1,
-                        sh_qid: shard_query_id1,
-                    },
-                    SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id2 as u64, shard_id2, nr_shards),
-                        sc: tf_idf.5,
-                        query: None,
-                        sh_id: shard_id2,
-                        sh_qid: shard_query_id2,
-                    },
-                    SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id3 as u64, shard_id3, nr_shards),
-                        sc: tf_idf.4,
-                        query: None,
-                        sh_id: shard_id3,
-                        sh_qid: shard_query_id3,
-                    },
-                    SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id4 as u64, shard_id4, nr_shards),
-                        sc: tf_idf.3,
-                        query: None,
-                        sh_id: shard_id4,
-                        sh_qid: shard_query_id4,
-                    },
-                    SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id5 as u64, shard_id5, nr_shards),
-                        sc: tf_idf.2,
-                        query: None,
-                        sh_id: shard_id5,
-                        sh_qid: shard_query_id5,
-                    },
-                    SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id6 as u64, shard_id6, nr_shards),
-                        sc: tf_idf.1,
-                        query: None,
-                        sh_id: shard_id6,
-                        sh_qid: shard_query_id6,
-                    },
-                    SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id7 as u64, shard_id7, nr_shards),
-                        sc: tf_idf.0,
-                        query: None,
-                        sh_id: shard_id7,
-                        sh_qid: shard_query_id7,
-                    },
-                ];
-                results.extend_from_slice(result_slice);
-
-                ids_arr = &ids_arr[8..];
-            }
-
-            // compute tf-idf for remining results if any
+            let ids_arr = read_bucket(ifd, mem_addr, len as usize, id_size);
             for &(shard_query_id, shard_id, trel) in ids_arr.iter() {
                 let tr = util::min((trel as f32) / 100.0, *ngram_tr);
                 results.push(SearchShardResult {
@@ -335,60 +210,6 @@ unsafe fn get_query_ids_with_simd(
                 });
             }
         }
-
-        norm += *ngram_tr * idf;
-    }
-
-    // -- end simd
-    Ok(ShardResults {
-        results: results,
-        norm: norm,
-    })
-}
-
-// --- simd end
-
-#[inline]
-fn get_query_ids_wo_simd(
-    ngrams: &HashMap<String, f32>,
-    map: &fst::Map,
-    ifd: &memmap::Mmap,
-    id_size: usize,
-) -> Result<ShardResults, Error> {
-    let n = *get_shard_size() as f32;
-    let nr_shards = *get_nr_shards();
-    let bucket_size = *get_bucket_size();
-
-    let mut norm: f32 = 0.0;
-    let mut results: Vec<SearchShardResult> = vec![];
-
-    for (ngram, ngram_tr) in ngrams {
-        // IDF score for the ngram
-        let mut idf: f32;
-        match get_addr_and_len(ngram, &map) {
-            // returns physical memory address and length of the vector (not a number of bytes)
-            Some((addr, len)) => {
-                // IDF for existing ngram
-                idf = (n / len as f32).log(2.0);
-                let mem_addr = addr as usize * id_size;
-                let len = util::min(len as usize, bucket_size);
-                let ids_arr = read_bucket(ifd, mem_addr, len, id_size);
-                for &(shard_query_id, shard_id, trel) in ids_arr.iter() {
-                    let tr = util::min((trel as f32) / 100.0, *ngram_tr);
-                    results.push(SearchShardResult {
-                        id: util::shard_id_2_query_id(shard_query_id as u64, shard_id, nr_shards),
-                        sc: tr * idf,
-                        query: None,
-                        sh_id: shard_id,
-                        sh_qid: shard_query_id,
-                    });
-                }
-            }
-            None => {
-                // IDF ngram that occurs for the 1st time
-                idf = n.log(2.0);
-            }
-        }
         // normalization score
         norm += ngram_tr * idf;
     }
@@ -397,20 +218,6 @@ fn get_query_ids_wo_simd(
         results: results,
         norm: norm,
     })
-}
-
-#[inline]
-fn get_query_ids(
-    ngrams: &HashMap<String, f32>,
-    map: &fst::Map,
-    ifd: &memmap::Mmap,
-    id_size: usize,
-) -> Result<ShardResults, Error> {
-    if cfg!(target_feature = "avx") {
-        unsafe { get_query_ids_with_simd(ngrams, map, ifd, id_size) }
-    } else {
-        get_query_ids_wo_simd(ngrams, map, ifd, id_size)
-    }
 }
 
 pub struct Qpick {
@@ -471,7 +278,6 @@ impl Qpick {
         unsafe {
             // TODO set up globals, later should be available via self.config
             NR_SHARDS = Some(c.nr_shards);
-            BUCKET_SIZE = Some(c.bucket_size);
             SHARD_SIZE = Some(c.shard_size);
             THREAD_POOL_SIZE = Some(c.thread_pool_size);
         }
