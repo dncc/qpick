@@ -2,47 +2,40 @@ extern crate fst;
 extern crate regex;
 
 use fst::Map;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use fnv::{FnvHashMap, FnvHashSet};
 
-use shard::QueryType;
+pub const WORDS_PER_QUERY: usize = 15;
+
+macro_rules! bow {
+    ($w1: expr, $w2: expr) => {{
+        let mut v = String::with_capacity($w1.len() + $w2.len() + 1);
+        if $w1 < $w2 {
+            v.push_str($w1);
+            v.push_str(" ");
+            v.push_str($w2);
+        } else {
+            v.push_str($w2);
+            v.push_str(" ");
+            v.push_str($w1);
+        }
+        v
+    }};
+}
 
 #[inline]
-fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut HashMap<String, f32>, mult: f32) {
+fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut FnvHashMap<String, f32>) {
     if words.len() == 1 {
-        let w = words[0].0.clone();
-        let tr = mult * words[0].1;
-        ngrams.insert(w, tr);
+        ngrams.insert(words[0].0.clone(), words[0].1);
     } else if words.len() > 1 {
         for i in 0..words.len() - 1 {
             let (w1, mut w2) = (&words[i].0, &words[i + 1].0);
-            let mut tr = mult * (words[i].1 + words[i + 1].1);
-            let mut v = String::with_capacity(w1.len() + w2.len() + 1);
-            if w1 < w2 {
-                v.push_str(w1);
-                v.push_str(" ");
-                v.push_str(w2);
-            } else {
-                v.push_str(w2);
-                v.push_str(" ");
-                v.push_str(w1);
-            }
-            ngrams.insert(v, tr);
+            let mut tr = words[i].1 + words[i + 1].1;
+            ngrams.insert(bow!(w1, w2), tr);
 
             if i < words.len() - 2 {
                 w2 = &words[i + 2].0;
                 tr = 0.97 * (words[i].1 + words[i + 2].1);
-                v = String::with_capacity(w1.len() + w2.len() + 1);
-                if w1 < w2 {
-                    v.push_str(w1);
-                    v.push_str(" ");
-                    v.push_str(w2);
-                } else {
-                    v.push_str(w2);
-                    v.push_str(" ");
-                    v.push_str(w1);
-                }
-                ngrams.insert(v, tr);
+                ngrams.insert(bow!(w1, w2), tr);
             }
         }
 
@@ -54,25 +47,10 @@ fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut HashMap<String, f32>, mult
                     if tr < tr_threshold {
                         continue;
                     }
-
-                    let (w1, mut w2) = (&words[i].0, &words[j].0);
-                    let mut v = String::with_capacity(w1.len() + w2.len() + 1);
-
-                    if w1 < w2 {
-                        v.push_str(w1);
-                        v.push_str(" ");
-                        v.push_str(w2);
-                    } else {
-                        v.push_str(w2);
-                        v.push_str(" ");
-                        v.push_str(w1);
+                    let ngram = bow!(&words[i].0, &words[j].0);
+                    if !ngrams.contains_key(&ngram) {
+                        ngrams.insert(ngram, tr);
                     }
-
-                    if ngrams.contains_key(&v) {
-                        continue;
-                    }
-
-                    ngrams.insert(v, tr);
                 }
             }
         }
@@ -90,7 +68,7 @@ fn normalize(query: &str) -> String {
 }
 
 #[inline]
-fn fold_to_ngram(terms: Vec<String>, terms_relevance: &HashMap<String, f32>) -> (String, f32) {
+fn fold_to_ngram(terms: Vec<String>, terms_relevance: &FnvHashMap<String, f32>) -> (String, f32) {
     let r = terms
         .iter()
         .fold(0.0, |a, t| a + terms_relevance.get(&t.clone()).unwrap());
@@ -100,11 +78,11 @@ fn fold_to_ngram(terms: Vec<String>, terms_relevance: &HashMap<String, f32>) -> 
 }
 
 #[inline]
-fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String, f32> {
-    let mut missing: HashSet<String> = HashSet::new();
-    let mut terms_rel: HashMap<String, f32> = HashMap::new();
+fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> FnvHashMap<String, f32> {
+    let mut missing: FnvHashSet<String> = FnvHashSet::default();
+    let mut terms_rel: FnvHashMap<String, f32> = FnvHashMap::default();
 
-    let tset = terms.clone().into_iter().collect::<HashSet<String>>();
+    let tset = terms.clone().into_iter().collect::<FnvHashSet<String>>();
     for t in &tset {
         match tr_map.get(t) {
             Some(tr) => {
@@ -140,13 +118,8 @@ fn get_terms_relevance(terms: &Vec<String>, tr_map: &fst::Map) -> HashMap<String
 }
 
 #[inline]
-pub fn parse(
-    query: &str,
-    stopwords: &HashSet<String>,
-    tr_map: &Map,
-    query_type: QueryType,
-) -> HashMap<String, f32> {
-    let mut ngrams: HashMap<String, f32> = HashMap::new();
+pub fn parse(query: &str, stopwords: &FnvHashSet<String>, tr_map: &Map) -> FnvHashMap<String, f32> {
+    let mut ngrams: FnvHashMap<String, f32> = FnvHashMap::default();
 
     let wvec = normalize(query)
         .split(" ")
@@ -198,14 +171,9 @@ pub fn parse(
         w_stop.push((s, r));
     }
 
-    let mult = match query_type {
-        QueryType::Q => 1.0,
-        QueryType::TUW => 0.95,
-    };
-
     // generate ngrams as bag of words combination of terms c a b d -> ac, bc, ab, ad, bd
-    bow_ngrams(w_stop, &mut ngrams, mult);
-    bow_ngrams(wo_stop, &mut ngrams, mult);
+    bow_ngrams(w_stop, &mut ngrams);
+    bow_ngrams(wo_stop, &mut ngrams);
 
     return ngrams;
 }
@@ -236,51 +204,39 @@ mod tests {
 
     #[test]
     fn test_parse_stopwords_query() {
-        let stopwords: HashSet<String> = ["und".to_string()].iter().cloned().collect();
+        let stopwords: FnvHashSet<String> = ["und".to_string()].iter().cloned().collect();
         let terms_relevance = Map::from_iter(vec![("1", 1), ("und", 1)]).unwrap();
 
         let mut query = "1 und 1";
-        let expected: HashMap<String, f32> =
+        let expected: FnvHashMap<String, f32> =
             [("1 und 1".to_string(), 1.0)].iter().cloned().collect();
-        assert_eq!(
-            parse(query, &stopwords, &terms_relevance, QueryType::Q),
-            expected
-        );
+        assert_eq!(parse(query, &stopwords, &terms_relevance), expected);
 
         query = "und und";
-        let expected: HashMap<String, f32> =
+        let expected: FnvHashMap<String, f32> =
             [("und und".to_string(), 1.0)].iter().cloned().collect();
-        assert_eq!(
-            parse(query, &stopwords, &terms_relevance, QueryType::Q),
-            expected
-        );
+        assert_eq!(parse(query, &stopwords, &terms_relevance), expected);
 
         query = "1 und 1 und";
-        let expected: HashMap<String, f32> =
+        let expected: FnvHashMap<String, f32> =
             [("1 und 1 und".to_string(), 1.0)].iter().cloned().collect();
-        assert_eq!(
-            parse(query, &stopwords, &terms_relevance, QueryType::Q),
-            expected
-        );
+        assert_eq!(parse(query, &stopwords, &terms_relevance), expected);
 
         query = "1 und 1 und 1";
-        let expected: HashMap<String, f32> = [("1 und 1 und 1".to_string(), 1.0)]
+        let expected: FnvHashMap<String, f32> = [("1 und 1 und 1".to_string(), 1.0)]
             .iter()
             .cloned()
             .collect();
-        assert_eq!(
-            parse(query, &stopwords, &terms_relevance, QueryType::Q),
-            expected
-        );
+        assert_eq!(parse(query, &stopwords, &terms_relevance), expected);
     }
 
     #[test]
     fn test_parse_query() {
         let query = "1 und 1 account login";
-        let stopwords: HashSet<String> = ["und".to_string()].iter().cloned().collect();
+        let stopwords: FnvHashSet<String> = ["und".to_string()].iter().cloned().collect();
         let terms_relevance = Map::from_iter(vec![("1", 1), ("und", 1)]).unwrap();
 
-        let expected: HashMap<String, f32> = [
+        let expected: FnvHashMap<String, f32> = [
             ("account".to_string(), 0.2),
             ("login".to_string(), 0.2),
             ("account login".to_string(), 0.4),
@@ -290,20 +246,18 @@ mod tests {
             .cloned()
             .collect();
 
-        assert_eq!(
-            parse(query, &stopwords, &terms_relevance, QueryType::Q),
-            expected
-        );
+        assert_eq!(parse(query, &stopwords, &terms_relevance), expected);
     }
 
     #[test]
     fn test_parse_long_query() {
         let query = "what i learned from 200 job interviews at google";
 
-        let stopwords: HashSet<String> = ["what".to_string(), "from".to_string(), "at".to_string()]
-            .iter()
-            .cloned()
-            .collect();
+        let stopwords: FnvHashSet<String> =
+            ["what".to_string(), "from".to_string(), "at".to_string()]
+                .iter()
+                .cloned()
+                .collect();
 
         let terms_relevance = Map::from_iter(vec![
             ("200", 1),
@@ -314,7 +268,7 @@ mod tests {
             ("learned", 1),
         ]).unwrap();
 
-        let expected: HashMap<String, f32> = [
+        let expected: FnvHashMap<String, f32> = [
             ("from 200 what i learned".to_string(), 0.5555556),
             ("200 job".to_string(), 0.22222222),
             ("from 200 job".to_string(), 0.33333334),
@@ -338,9 +292,6 @@ mod tests {
             .cloned()
             .collect();
 
-        assert_eq!(
-            parse(query, &stopwords, &terms_relevance, QueryType::Q),
-            expected
-        );
+        assert_eq!(parse(query, &stopwords, &terms_relevance), expected);
     }
 }

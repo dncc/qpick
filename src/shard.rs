@@ -207,8 +207,7 @@ pub fn shard(
                         continue;
                     }
 
-                    let ngrams =
-                        &ngrams::parse(&query, &stopwords, &tr_map, QueryType::from(query_type));
+                    let ngrams = &ngrams::parse(&query, &stopwords, &tr_map);
                     for (ngram, sc) in ngrams {
                         let shard_ngram_id =
                             util::jump_consistent_hash_str(ngram, number_of_shards as u32);

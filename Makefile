@@ -1,8 +1,11 @@
 PROJECT_LOCAL_PATH := $(strip $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))"))
 PROJECT_DIR := $(shell basename `pwd`)
 HOME_REMOTE_PATH := ~/${USER}
-PROJECT_REMOTE_PATH := ~/${USER}/${PROJECT_DIR}
-INDEX_REMOTE_PATH := /raid/${USER}/qpick-1b-test
+
+PROJECT_REMOTE_PATH := /root/${USER}/${PROJECT_DIR}
+#INDEX_REMOTE_PATH := /raid/${USER}/qpick-1b-test
+INDEX_REMOTE_PATH := /raid/qpick/output
+
 QPICK_BRANCH := i2q
 TMUXW := 0
 
@@ -54,17 +57,30 @@ qpick/rsync:
 		--filter=': -.gitignore' \
 	${PROJECT_LOCAL_PATH} root@${IP}:${HOME_REMOTE_PATH}
 
+.PHONY: update/bin
+update/bin:
+	ssh root@${IP} "tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH} && \
+		   cargo build --release --manifest-path ./bin/Cargo.toml --verbose' ENTER && \
+		   tmux send -t qpick:${TMUXW} 'cd ${INDEX_REMOTE_PATH} && \
+		   cp ${PROJECT_REMOTE_PATH}/bin/target/release/qpick ${INDEX_REMOTE_PATH}' ENTER"
+
+.PHONY: update/dev
+update/dev: qpick/rsync update/bin
+
 .PHONY: qpick/clone
 qpick/clone:
-	ssh root@${IP} "cd ${HOME_REMOTE_PATH} && \
-					rm -rf qpick && \
-					git clone https://github.com/dncc/qpick.git && cd qpick && git checkout ${QPICK_BRANCH}"
+	ssh root@${IP} "mkdir -p ${HOME_REMOTE_PATH} && \
+		cd ${HOME_REMOTE_PATH} && \
+		rm -rf qpick && git clone https://github.com/dncc/qpick.git && \
+		cd qpick && git checkout ${QPICK_BRANCH}"
 
 .PHONY: ssh/build/dep
 ssh/build/dep:
-	ssh root@${IP} "cd ${HOME_REMOTE_PATH}/qpick && \
-	apt-get install libffi-dev && \
-	curl https://sh.rustup.rs -sSf | sh -s -- -y"
+	ssh root@${IP} "mkdir -p ${HOME_REMOTE_PATH} && \
+		cd ${HOME_REMOTE_PATH}/qpick && \
+		apt-get update && \
+		apt-get install -y libffi-dev && \
+		curl https://sh.rustup.rs -sSf | sh -s -- -y"
 
 .PHONY: ssh/build/qpick
 ssh/build/qpick:
@@ -77,7 +93,7 @@ ssh/build/qpick:
 ssh/build/pyqpick:
 	ssh root@${IP} "PATH=~/.cargo/bin:${PATH} && \
 	cd ${HOME_REMOTE_PATH}/qpick/python_bindings && \
-	python setup.py install"
+	python3 setup.py install"
 
 PHONY: ssh/install/test
 ssh/install/test: qpick/rsync install/req download/data download/ws ssh/build/dep ssh/build/qpick ssh/build/pyqpick

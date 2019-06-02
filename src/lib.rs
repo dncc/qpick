@@ -6,6 +6,7 @@ extern crate libc;
 #[macro_use]
 extern crate serde_derive;
 extern crate flate2;
+extern crate fnv;
 extern crate fs2;
 extern crate memmap;
 extern crate pbr;
@@ -18,7 +19,8 @@ use std::fs::OpenOptions;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::cmp::{Ordering, PartialOrd};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use fnv::{FnvHashMap, FnvHashSet};
 
 use byteorder::{ByteOrder, LittleEndian};
 use fst::Map;
@@ -36,8 +38,6 @@ pub mod shard;
 pub mod builder;
 pub mod stopwords;
 pub mod stringvec;
-
-use shard::QueryType;
 
 use util::{BRED, BYELL, ECOL};
 
@@ -223,7 +223,7 @@ fn get_query_ids(
 pub struct Qpick {
     path: String,
     config: config::Config,
-    stopwords: HashSet<String>,
+    stopwords: FnvHashSet<String>,
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
     shard_range: Range<u32>,
@@ -381,7 +381,10 @@ impl Qpick {
     }
 
     #[inline]
-    fn shard_ngrams(&self, ngrams: &HashMap<String, f32>) -> HashMap<usize, HashMap<String, f32>> {
+    fn shard_ngrams(
+        &self,
+        ngrams: &FnvHashMap<String, f32>,
+    ) -> HashMap<usize, HashMap<String, f32>> {
         let mut shards_ngrams: HashMap<usize, HashMap<String, f32>> = HashMap::new();
         for (ngram, sc) in ngrams {
             let shard_id = util::jump_consistent_hash_str(ngram, self.config.nr_shards as u32);
@@ -401,7 +404,7 @@ impl Qpick {
 
     fn get_ids(
         &self,
-        ngrams: &HashMap<String, f32>,
+        ngrams: &FnvHashMap<String, f32>,
         count: Option<usize>,
     ) -> Result<Vec<SearchResult>, Error> {
         let shards_ngrams = self.shard_ngrams(ngrams);
@@ -461,8 +464,8 @@ impl Qpick {
 
         let mut dist_results: Vec<DistanceResult> = vec![];
 
-        let ref ngrams: HashMap<String, f32> =
-            ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
+        let ref ngrams: FnvHashMap<String, f32> =
+            ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
         let mut dist_norm: f32 = 0.0;
         let mut ngram_tr_idfs: HashMap<String, (f32, f32)> = HashMap::new();
@@ -477,12 +480,8 @@ impl Qpick {
             .for_each(drop);
 
         for cand_query in candidates.into_iter() {
-            let ref cand_ngrams: HashMap<String, f32> = ngrams::parse(
-                &cand_query,
-                &self.stopwords,
-                &self.terms_relevance,
-                QueryType::Q,
-            );
+            let ref cand_ngrams: FnvHashMap<String, f32> =
+                ngrams::parse(&cand_query, &self.stopwords, &self.terms_relevance);
 
             let mut dist_sim: f32 = 0.0;
             for (cngram, ctr) in cand_ngrams {
@@ -506,8 +505,8 @@ impl Qpick {
             return vec![];
         }
 
-        let ref ngrams: HashMap<String, f32> =
-            ngrams::parse(&query, &self.stopwords, &self.terms_relevance, QueryType::Q);
+        let ref ngrams: FnvHashMap<String, f32> =
+            ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
         match self.get_ids(ngrams, Some(count as usize)) {
             Ok(ids) => ids,
@@ -531,4 +530,3 @@ impl Qpick {
 
 #[allow(dead_code)]
 fn main() {}
-// TODO clean nget_str etc... fix python bindings to show search results,  rename get to search

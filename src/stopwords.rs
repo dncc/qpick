@@ -2,10 +2,10 @@ use std::io::Error;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::fs::File;
-use std::collections::HashSet;
+use fnv::FnvHashSet;
 
-pub fn load(path: &str) -> Result<HashSet<String>, Error> {
-    let mut stopwords = HashSet::new();
+pub fn load(path: &str) -> Result<FnvHashSet<String>, Error> {
+    let mut stopwords = FnvHashSet::default();
 
     let f = try!(File::open(path));
     let file = BufReader::new(&f);
