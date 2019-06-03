@@ -70,6 +70,7 @@ pub fn shard(
     number_of_shards: usize,
     output_dir: &str,
     prefixes: &Vec<String>,
+    create_i2q: bool,
 ) -> Result<(), Error> {
     println!("Sharding...");
 
@@ -198,7 +199,10 @@ pub fn shard(
                     };
 
                     // add query to index -> query vector
-                    str_vec_writer.add(query.clone());
+                    if create_i2q {
+                        str_vec_writer.add(query.clone());
+                    };
+
                     if !valid_prefixes.is_empty() && !valid_prefixes.contains(&query_type) {
                         continue;
                     }
@@ -260,10 +264,13 @@ pub fn shard(
                 }
             }
 
-            str_vec_writer.write_to_file(&Path::new(&format!(
-                "{}/{}.{}",
-                &output_dir, i2q_file, worker_id
-            )));
+            if create_i2q {
+                str_vec_writer.write_to_file(&Path::new(&format!(
+                    "{}/{}.{}",
+                    &output_dir, i2q_file, worker_id
+                )));
+            };
+
             sender.send(processed_count).unwrap(); //finished!
         });
     }

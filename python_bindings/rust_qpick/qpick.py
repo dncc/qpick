@@ -128,7 +128,7 @@ class Qpick(object):
                                 lib.qpick_dist_item_free)
 
 
-def shard(file_path, nr_shards, output_dir, prefixes=[]):
+def shard(file_path, nr_shards, output_dir, prefixes=[], create_i2q=True):
     if type(file_path) == str:
         file_path = file_path.encode()
 
@@ -142,7 +142,9 @@ def shard(file_path, nr_shards, output_dir, prefixes=[]):
             p = p.encode('utf-8')
         lib.string_vec_push(pref_vec_ptr, p)
 
-    lib.qpick_shard(file_path, nr_shards, output_dir, pref_vec_ptr)
+    create_i2q = int(create_i2q)
+
+    lib.qpick_shard(file_path, nr_shards, output_dir, pref_vec_ptr, create_i2q)
 
 def compile_i2q(file_path, output_dir):
     if type(file_path) == str:

@@ -87,8 +87,8 @@ pub extern "C" fn qpick_shard(
     file_path: *mut libc::c_char,
     nr_shards: libc::uint32_t,
     output_dir: *mut libc::c_char,
-    // prefixes: *mut libc::c_char,
     prefixes: *mut Vec<String>,
+    create_i2q: libc::uint8_t,
 ) {
     let file_path = cstr_to_str(file_path);
     let output_dir = cstr_to_str(output_dir);
@@ -98,6 +98,7 @@ pub extern "C" fn qpick_shard(
         nr_shards as usize,
         &output_dir.to_string(),
         ref_from_ptr!(prefixes),
+        create_i2q != 0,
     );
     println!("{:?}", r);
 }

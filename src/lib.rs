@@ -421,6 +421,7 @@ pub struct Qpick {
     shards: Arc<Vec<Shard>>,
     shard_range: Range<u32>,
     id_size: usize,
+    i2q_loaded: bool,
 }
 
 pub struct Shard {
@@ -507,6 +508,7 @@ impl Qpick {
             ),
         };
 
+        let mut i2q_loaded = true;
         let mut shards = vec![];
         for i in shard_range.start..shard_range.end {
             let map_path = format!("{}/map.{}", path, i);
@@ -534,6 +536,8 @@ impl Qpick {
                 None
             };
 
+            i2q_loaded = i2q_loaded && !i2q.is_none();
+
             shards.push(Shard {
                 shard: shard,
                 map: map,
@@ -554,7 +558,12 @@ impl Qpick {
             shards: Arc::new(shards),
             shard_range: shard_range,
             id_size: id_size,
+            i2q_loaded: i2q_loaded,
         }
+    }
+
+    pub fn i2q_is_loaded(&self) -> bool {
+        self.i2q_loaded
     }
 
     pub fn from_path(path: String) -> Self {

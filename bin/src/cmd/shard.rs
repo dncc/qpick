@@ -6,12 +6,18 @@ use qpick::shard;
 const USAGE: &'static str = "
 Creates ngram shards from an input directory.
 Usage:
-    qpick shard [options] <path> <nr-shards> <output-dir> <prefixes>
+    qpick shard <path> <nr-shards> <output-dir> <prefixes> [--create-i2q]
     qpick shard --help
 Options:
     -h, --help  path: is a directory path to query files (.gz).
                 nr-shards: how many shards to create.
                 ouput-dir: where to save shard files
+                prefixes: csv list of prefixes (e.g. 'q, qe, tuw')
+                         determining which queries to shard, if not
+                         provided (default) it shards everything
+                create-i2q: whether of not to compile i2q index
+                        (integer to query mapping), if not provided
+                        (default) it will create it
 ";
 
 #[derive(Debug, Deserialize)]
@@ -20,6 +26,7 @@ struct Args {
     arg_nr_shards: usize,
     arg_output_dir: String,
     arg_prefixes: Option<String>,
+    flag_create_i2q: bool,
 }
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
@@ -31,6 +38,8 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         Some(prefs) => prefs,
         None => "".to_string(),
     };
+
+    println!("create_i2q: {:?}", args.flag_create_i2q);
 
     let prefixes: Vec<String> = prefixes
         .split(",")
@@ -45,6 +54,7 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         args.arg_nr_shards,
         &args.arg_output_dir,
         &prefixes,
+        args.flag_create_i2q,
     );
     println!("{:?}", r);
 

@@ -54,7 +54,7 @@ ffi.cdef("""
     /**
         shard, index, compile_i2q API
     **/
-    void qpick_shard(char*, uint32_t, char*, StringVec*);
+    void qpick_shard(char*, uint32_t, char*, StringVec*, uint8_t);
     void qpick_compile_i2q(char*, char*);
     void qpick_index(char*, uint32_t, uint32_t, char*);
 
