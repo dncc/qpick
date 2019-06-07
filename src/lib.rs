@@ -13,7 +13,6 @@ extern crate pbr;
 extern crate rand;
 extern crate serde_json;
 
-use std::io;
 use std::sync::Arc;
 use std::fs::OpenOptions;
 use std::ops::Range;
@@ -88,25 +87,6 @@ fn get_addr_and_len(ngram: &str, map: &fst::Map) -> Option<(u64, u64)> {
     match map.get(ngram) {
         Some(val) => return Some(util::elegant_pair_inv(val)),
         None => return None,
-    }
-}
-
-// Advise the OS on the random access pattern of data.
-// Taken from https://docs.rs/crate/madvise/0.1.0
-#[cfg(unix)]
-fn advise_ram(data: &[u8]) -> io::Result<()> {
-    unsafe {
-        let result = libc::madvise(
-            util::as_ptr(data) as *mut libc::c_void,
-            data.len(),
-            libc::MADV_RANDOM as libc::c_int,
-        );
-
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
     }
 }
 
@@ -322,7 +302,8 @@ impl Qpick {
             // advice OS on random access to the map file and create Fst object from it
             let map_file = MmapReadOnly::open_path(&map_path).unwrap();
             unsafe {
-                advise_ram(map_file.as_slice()).expect(&format!("Advisory failed for map {}", i))
+                util::advise_ram(map_file.as_slice())
+                    .expect(&format!("Advisory failed for map {}", i))
             };
             let map = match Fst::from_mmap(map_file) {
                 Ok(fst) => Map::from(fst),
@@ -333,7 +314,7 @@ impl Qpick {
             let shard_file = OpenOptions::new().read(true).open(shard_name).unwrap();
             let shard = unsafe { Mmap::map(&shard_file).unwrap() };
 
-            advise_ram(&shard[..]).expect(&format!("Advisory failed for shard {}", i));
+            util::advise_ram(&shard[..]).expect(&format!("Advisory failed for shard {}", i));
 
             let i2q_path = PathBuf::from(&path).join(&format!("{}.{}", c.i2q_file, i));
             let i2q = if i2q_path.exists() {

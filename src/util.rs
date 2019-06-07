@@ -1,3 +1,4 @@
+use std::io;
 use std::error;
 use std::fmt;
 use std::cmp::PartialOrd;
@@ -227,4 +228,23 @@ pub fn tmp_file_path(prefix: &str, suffix: &str, rand_len: usize) -> PathBuf {
     buf.push_str(suffix);
 
     temp_dir().join(buf)
+}
+
+// Advise the OS on the random access pattern of data.
+// Taken from https://docs.rs/crate/madvise/0.1.0
+#[cfg(unix)]
+pub fn advise_ram(data: &[u8]) -> io::Result<()> {
+    unsafe {
+        let result = libc::madvise(
+            as_ptr(data) as *mut libc::c_void,
+            data.len(),
+            libc::MADV_RANDOM as libc::c_int,
+        );
+
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
 }

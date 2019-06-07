@@ -146,7 +146,6 @@ impl StrVec {
         let offsets_size = LittleEndian::read_u64(&buf);
         let strings_addr = bytes_read + offsets_size as usize;
         let offset_data = unsafe { memmap::Mmap::map(&File::open(&path).unwrap()).unwrap() };
-
         let offsets = load::<Offset>(&offset_data[bytes_read..strings_addr as usize]);
 
         let strings = unsafe {
@@ -160,6 +159,7 @@ impl StrVec {
             ].join("")))
                 .unwrap()
         };
+        util::advise_ram(&strings[..]).expect(&format!("Advisory failed for i2q {:?}", &path));
 
         StrVec {
             strings_addr: strings_addr,
