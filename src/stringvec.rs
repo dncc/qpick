@@ -131,13 +131,12 @@ impl Index<usize> for StrVec {
 
 impl StrVec {
     pub fn load(path: &Path) -> Self {
-        let bytes_read;
         let mut buf = vec![0u8; size_of::<u64>()];
 
         // read offsets size
-        let vec_file = OpenOptions::new().read(true).open(&path).unwrap();
+        let ref vec_file = OpenOptions::new().read(true).open(&path).unwrap();
         let mut handle = vec_file.take(size_of::<u64>() as u64);
-        bytes_read = handle.read(&mut buf).unwrap_or(0);
+        let mut bytes_read = handle.read(&mut buf).unwrap_or(0);
         assert!(
             bytes_read == size_of::<u64>(),
             "Failed to read offsets size from the file {:?}",
@@ -145,8 +144,17 @@ impl StrVec {
         );
         let offsets_size = LittleEndian::read_u64(&buf);
         let strings_addr = bytes_read + offsets_size as usize;
-        let offset_data = unsafe { memmap::Mmap::map(&File::open(&path).unwrap()).unwrap() };
-        let offsets = load::<Offset>(&offset_data[bytes_read..strings_addr as usize]);
+        let mut offsets_data = vec![0u8; offsets_size as usize];
+        handle = vec_file.take(offsets_size);
+        bytes_read = handle.read(&mut offsets_data).unwrap_or(0);
+        assert!(
+            bytes_read == offsets_size as usize,
+            "Failed to read offsets data from the file {:?}, bytes_read: {:?}, expected: {:?}",
+            path,
+            bytes_read,
+            offsets_size
+        );
+        let offsets = load::<Offset>(&offsets_data[..]);
 
         let strings = unsafe {
             Mmap::map(&OpenOptions::new().read(true).open(path).expect(&[
