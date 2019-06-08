@@ -415,14 +415,20 @@ impl Qpick {
             norm += sh_res.norm;
         }
 
-        let mut res_data: Vec<SearchResult> = res_data
-            .par_iter()
+        let mut res_data: Vec<(u64, f32)> = res_data
+            .into_iter()
             .filter(|(_, sc)| *sc / norm > LOW_SIM_THRESH)
+            .collect::<Vec<(u64, f32)>>();
+        res_data.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse());
+
+        Ok(res_data
+            .into_iter()
+            .take(count.unwrap_or(100))
             .map(|(id, sc)| {
-                let (sh_qid, sh_id) = ids_map.get(id).unwrap();
+                let (sh_qid, sh_id) = ids_map.get(&id).unwrap();
                 SearchResult {
-                    id: *id,
-                    sc: util::max(1.0 - *sc / norm, 0.0),
+                    id: id,
+                    sc: util::max(1.0 - sc / norm, 0.0),
                     query: if let Some(ref i2q) = &self.shards[*sh_id as usize].i2q {
                         Some(i2q[*sh_qid as usize].to_string())
                     } else {
@@ -430,12 +436,7 @@ impl Qpick {
                     },
                 }
             })
-            .collect();
-
-        res_data.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
-        res_data.truncate(count.unwrap_or(100)); //TODO put into config
-
-        Ok(res_data)
+            .collect())
     }
 
     pub fn get_distances(&self, query: &str, candidates: &Vec<String>) -> Vec<DistanceResult> {
