@@ -1,58 +1,83 @@
 qpick
 ===
 
-Search for similar short strings (queries in particular).
+Search for similar short strings (queries in particular) based on keyword matches and TF-IDF-like scoring function.
 
 #### Install
-```
-git clone https://github.com/dncc/qpick.git && git checkout
-cd qpick
-cargo build --release --manifest-path ./bin/Cargo.toml --verbose
-# build python bindings
-cd python_bindings
-python setup.py install
+
+With Rust already installed, run:
 
 ```
-
-#### Build Index
-
-The following command would partition the input data from `./parts/input.txt` into 32 shards and store them in `./index` directory:
-
-```
-./bin/target/release/qpick shard "./parts/input.txt" 32 "./index"
-```
-Input is a text file where each line represents one query. The query id in the index will be the ordinal number of the line.
-
-After shards are created the following command will compile them and store the index file in the same `./index` directory:
-
-```
-./bin/target/release/qpick index "./index" 0 32 "./index"
+git clone https://github.com/dncc/qpick.git && cd qpick
+make install
 ```
 
-Each shard is compiled in parallel. Since to compile a large number of queries (e.g. 5 billion) takes a lot of memory, it is possible to compile only a few shards at once. The following command would for instance compile just 5 shards (0, 1, 2, 3, 4):
+Without Rust installation, run:
 
 ```
-./bin/target/release/qpick index "./index" 0 5 "./index"
+git clone https://github.com/dncc/qpick.git && cd qpick
+make install/rust
+make install
 ```
 
-#### Search
+#### Indexing
 
-From command line:
+An expected input to build a search index is a directory containing `*.gz` files. Each line found in files is indexed as a separate query. A unique ordinal number of the line represents its unique id.
+
+The search index is built in 2 stages, sharding and compilation:
+
+ - To shard a test data set from `./test/sample.gz` into 32 shards and store them in the `./index` directory, run:
+
 ```
-./bin/target/release/qpick get "gdp per capita USA" 100
+./bin/target/release/qpick shard ./test/sample.gz 32 ./index ""
 ```
 
-In python:
+ - To compile shards into a search index and store it in the `./index` directory, run:
+
+```
+./bin/target/release/qpick index ./index 0 32 ./index
+```
+
+Each shard is compiled in parallel. Since it could take a lot of RAM to compile a large number of queries at once (e.g. 5 billion), it is possible to compile only a few shards at the time. The following command would compile just 5 shards (shards 0, 1, 2, 3 and 4):
+
+```
+./bin/target/release/qpick index ./index 0 5 ./index
+```
+
+#### Searching
+
+Once indexing is completed, searching can be done from the command line:
+
+For instance:
+
+```
+./bin/target/release/qpick get "changing mac os menu bar" 10
+```
+
+gives (with the `./test/sample.gz` data set):
+```
+#=> [(0, 0.39147103, "changing mac menu bar"), (1, 0.5766359, "emails menu bar mac os")]
+```
+
+where each result is a tuple, containing:
+
+  - query id,
+
+  - distance from the original query, in the range from 0.0 to 1.0, where zero is the best (the closest) and 1 is the worst (the furthest) result,
+
+  - and query.
+
+Or the same example from python:
 
 ```python
 
 from rust_qpick import Qpick
-qpick = Qpick("/raid/qpick/index")
+qpick = Qpick("./index")
 
 # lookup with one query
-results = list(qpick.get('a formatter for python files', 10))
+list(qpick.get('changing mac os menu bar', 10))
 
-# lookup with multiple queries
-results = list(qpick.nget(['a formatter for python files', 'formatting library for python'], 100))
+# => [(0, 0.39147108793258667, 'changing mac menu bar'),
+#     (1, 0.5766359567642212, 'emails menu bar mac os')]
 
 ```

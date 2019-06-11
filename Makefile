@@ -6,7 +6,7 @@ PROJECT_REMOTE_PATH := /root/${USER}/${PROJECT_DIR}
 #INDEX_REMOTE_PATH := /raid/${USER}/qpick-1b-test
 INDEX_REMOTE_PATH := /raid/qpick/output
 
-QPICK_BRANCH := i2q
+QPICK_BRANCH := master
 TMUXW := 0
 
 .PHONY: install/req
@@ -67,8 +67,8 @@ update/bin:
 .PHONY: update/dev
 update/dev: qpick/rsync update/bin
 
-.PHONY: qpick/clone
-qpick/clone:
+.PHONY: ssh/qpick/clone
+ssh/qpick/clone:
 	ssh root@${IP} "mkdir -p ${HOME_REMOTE_PATH} && \
 		cd ${HOME_REMOTE_PATH} && \
 		rm -rf qpick && git clone https://github.com/dncc/qpick.git && \
@@ -99,14 +99,21 @@ PHONY: ssh/install/test
 ssh/install/test: qpick/rsync install/req download/data download/ws ssh/build/dep ssh/build/qpick ssh/build/pyqpick
 
 PHONY: ssh/install/branch
-ssh/install/qpick: qpick/clone ssh/build/dep ssh/build/qpick ssh/build/pyqpick
+ssh/install/qpick: ssh/qpick/clone ssh/build/dep ssh/build/qpick ssh/build/pyqpick
 
 # ================ localhost =================
-.PHONY: qpick/dep
-build/dep:
+.PHONY: install/rust
+install/rust:
 	sudo apt-get install libffi-dev
 	curl https://sh.rustup.rs -sSf | sh -s -- -y
 	export PATH=~/.cargo/bin:${PATH}
+
+.PHONY: clone/qpick
+clone/qpick:
+	ssh root@${IP} "mkdir -p ${HOME_REMOTE_PATH} && \
+		cd ${HOME_REMOTE_PATH} && \
+		rm -rf qpick && git clone https://github.com/dncc/qpick.git && \
+		cd qpick && git checkout ${QPICK_BRANCH}"
 
 .PHONY: build/qpick
 build/qpick:
@@ -118,11 +125,11 @@ build/qpick:
 build/pyqpick:
 	cd python_bindings && python setup.py install
 
-.PHONY: install
-install: build/dep build/qpick build/pyqpick
-
-
 .PHONY: build/goqpick
 build/goqpick:
 	cd golang_service && make
+
+.PHONY: install
+install: build/qpick build/pyqpick
+
 
