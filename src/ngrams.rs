@@ -288,6 +288,8 @@ mod tests {
             ("200 interviews".to_string(), 0.21555556),
             ("interviews job".to_string(), 0.22222222),
             ("job learned".to_string(), 0.21555556),
+            ("at google from 200".to_string(), 0.44444445),
+            ("interviews what i learned".to_string(), 0.44444445),
         ].iter()
             .cloned()
             .collect();

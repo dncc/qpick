@@ -3,17 +3,24 @@
 
   String vector file layout:
 
-  [8B off_a] [[6B off_0] [6B off_1]  ... [6B off_n] [[string 0] [string 1] ... [str n-1]]
-  ^         ^                                      ^           ^                         ^
-  |         |                                      |           |                         |
-  0 ------- 8 -------------------------- [8 + off_a] --- [8 + off_a + off_1] --- [8 + off_a + off_n]
+  [8B off_a][[6B off_0] [6B off_1]  ... [6B off_n][[string 1][string 2] ... [string n]]
+  ^         ^                                     ^          ^                        ^
+  |         |                                     |          |                        |
+  0 ------- 8 ------------------------- [8 + off_a] --- [8 + off_a + off_1] --- [8 + off_a + off_n]
 
-  So:
   - first 8 bytes (u64) are used to store size of the offsets' array (off_a):
-        off_arr_size = [number_of_strings + 1] * offset_size
-  - offset values start at byte [8] and end at byte [8 + offset_size]
-  - offset for the first string is stored in [off_1] slot (off_0 stores value 0)
-  - offset for the last string (n-1) is stored in [off_n]
+
+        off_a = [number_of_strings + 1] * offset_size
+
+    where offset_size is 6 bytes and the +1 slot is for the offset zero, set to 0 value
+
+  - offsets start at byte [8] and end at byte [8 + off_a - 1]
+
+  - offset for the first string (*off_1) is stored at the [off_1] address (off_0 stores value 0)
+
+  - offset for the last string (*off_n) is stored at the [off_n] address
+
+  - strings start at [8 + off_a] and end at [8 + off_a + off_n] address, that is also the EOF.
 
 
     write:
@@ -30,9 +37,9 @@
         let str_vec = StrVec::load("./queries.bin", &offsets);
 
     access:
-        // string indexes start from 0, access to first query:
+        // string indexes start from 0, access the first string:
         str_vec[0] -> &str
-        // access 10th query
+        // access the 10th string
         str_vec[9] -> &str
 
  */
