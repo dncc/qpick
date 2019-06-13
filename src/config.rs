@@ -11,7 +11,6 @@ pub struct Config {
     pub nr_shards: usize,
     pub shard_size: usize, // number of ids in the shard
     pub terms_relevance_file: String,
-    pub thread_pool_size: usize,
     pub stopwords_file: String,
     pub i2q_file: String,
 }
@@ -69,11 +68,6 @@ impl Config {
             _ => panic!("Failed to load i2q file name from the config!"),
         };
 
-        let thread_pool_size = match config["thread_pool_size"] {
-            Value::Number(ref thread_pool_size) => thread_pool_size.as_u64().unwrap(),
-            _ => panic!("Failed to load thread_pool_size from the config file!"),
-        };
-
         Config {
             id_size: id_size as usize,
             bucket_size: bucket_size as usize,
@@ -82,7 +76,6 @@ impl Config {
             terms_relevance_file: terms_relevance_file.to_string(),
             stopwords_file: stopwords_file.to_string(),
             i2q_file: i2q_file.to_string(),
-            thread_pool_size: thread_pool_size as usize,
         }
     }
 }

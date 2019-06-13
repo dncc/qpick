@@ -58,13 +58,11 @@ macro_rules! make_static_var_and_getter {
 extern crate rayon;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use rayon::ThreadPoolBuilder;
 
 pub const LOW_SIM_THRESH: f32 = 0.099; // take only queries with similarity above
 
 make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
 make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
-make_static_var_and_getter!(get_thread_pool_size, THREAD_POOL_SIZE, usize);
 
 #[inline]
 fn read_bucket(mmap: &memmap::Mmap, addr: usize, len: usize, id_size: usize) -> Vec<(u32, u8, u8)> {
@@ -259,7 +257,6 @@ impl Qpick {
             // TODO set up globals, later should be available via self.config
             NR_SHARDS = Some(c.nr_shards);
             SHARD_SIZE = Some(c.shard_size);
-            THREAD_POOL_SIZE = Some(c.thread_pool_size);
         }
 
         let shard_range = shard_range_opt.unwrap_or(0..c.nr_shards as u32);
@@ -339,11 +336,6 @@ impl Qpick {
             .iter()
             .fold(true, |b, (is_loaded, _)| b && *is_loaded);
         let shards = shards.into_iter().map(|(_, s)| s).collect();
-
-        ThreadPoolBuilder::new()
-            .num_threads(*get_thread_pool_size())
-            .build()
-            .unwrap();
 
         Qpick {
             config: c,
