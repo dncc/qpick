@@ -294,43 +294,51 @@ impl Qpick {
             ),
         };
 
-        let mut i2q_loaded = true;
-        let mut shards = vec![];
-        for i in shard_range.start..shard_range.end {
-            let map_path = format!("{}/map.{}", path, i);
+        let shard_indexes: Vec<u32> = (shard_range.start..shard_range.end).collect();
+        let shards: Vec<(bool, Shard)> = shard_indexes
+            .par_iter()
+            .map(|i| {
+                let map_path = format!("{}/map.{}", path, i);
 
-            // advice OS on random access to the map file and create Fst object from it
-            let map_file = MmapReadOnly::open_path(&map_path).unwrap();
-            unsafe {
-                util::advise_ram(map_file.as_slice())
-                    .expect(&format!("Advisory failed for map {}", i))
-            };
-            let map = match Fst::from_mmap(map_file) {
-                Ok(fst) => Map::from(fst),
-                Err(_) => panic!("Failed to load index map: {}!", &map_path),
-            };
+                // advice OS on random access to the map file and create Fst object from it
+                let map_file = MmapReadOnly::open_path(&map_path).unwrap();
+                unsafe {
+                    util::advise_ram(map_file.as_slice())
+                        .expect(&format!("Advisory failed for map {}", i))
+                };
+                let map = match Fst::from_mmap(map_file) {
+                    Ok(fst) => Map::from(fst),
+                    Err(_) => panic!("Failed to load index map: {}!", &map_path),
+                };
 
-            let shard_name = format!("{}/shard.{}", path, i);
-            let shard_file = OpenOptions::new().read(true).open(shard_name).unwrap();
-            let shard = unsafe { Mmap::map(&shard_file).unwrap() };
+                let shard_name = format!("{}/shard.{}", path, i);
+                let shard_file = OpenOptions::new().read(true).open(shard_name).unwrap();
+                let shard = unsafe { Mmap::map(&shard_file).unwrap() };
 
-            util::advise_ram(&shard[..]).expect(&format!("Advisory failed for shard {}", i));
+                util::advise_ram(&shard[..]).expect(&format!("Advisory failed for shard {}", i));
 
-            let i2q_path = PathBuf::from(&path).join(&format!("{}.{}", c.i2q_file, i));
-            let i2q = if i2q_path.exists() {
-                Some(stringvec::StrVec::load(&i2q_path))
-            } else {
-                None
-            };
+                let i2q_path = PathBuf::from(&path).join(&format!("{}.{}", c.i2q_file, i));
+                let i2q = if i2q_path.exists() {
+                    Some(stringvec::StrVec::load(&i2q_path))
+                } else {
+                    None
+                };
 
-            i2q_loaded = i2q_loaded && !i2q.is_none();
+                (
+                    !i2q.is_none(),
+                    Shard {
+                        shard: shard,
+                        map: map,
+                        i2q: i2q,
+                    },
+                )
+            })
+            .collect();
 
-            shards.push(Shard {
-                shard: shard,
-                map: map,
-                i2q: i2q,
-            });
-        }
+        let i2q_loaded = shards
+            .iter()
+            .fold(true, |b, (is_loaded, _)| b && *is_loaded);
+        let shards = shards.into_iter().map(|(_, s)| s).collect();
 
         ThreadPoolBuilder::new()
             .num_threads(*get_thread_pool_size())

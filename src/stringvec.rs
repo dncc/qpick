@@ -108,19 +108,9 @@ impl Offset {
 
 pub struct StrVec {
     strings_addr: usize,
-    offsets: Vec<Offset>,
+    // Vec<Offset> is not used due to a slow loading speed during initialization
+    offsets: Vec<u8>,
     strings: Mmap,
-}
-
-pub fn load<T: Clone>(buffer: &[u8]) -> Vec<T> {
-    let vectors: &[T] = unsafe {
-        ::std::slice::from_raw_parts(
-            buffer.as_ptr() as *const T,
-            buffer.len() / ::std::mem::size_of::<T>(),
-        )
-    };
-
-    vectors.to_vec()
 }
 
 use std::str;
@@ -128,11 +118,17 @@ use std::ops::Index;
 impl Index<usize> for StrVec {
     type Output = str;
 
+    #[inline]
     fn index(&self, idx: usize) -> &str {
-        let ai: usize = self.strings_addr + usize::from(self.offsets[idx]);
-        let aj: usize = self.strings_addr + usize::from(self.offsets[idx + 1]);
+        let b = idx * BYTES_PER_OFFSET;
+        let (m, e) = (b + BYTES_PER_OFFSET, b + 2 * BYTES_PER_OFFSET);
 
-        &str::from_utf8(&self.strings[ai..aj]).unwrap()
+        let begin = self.strings_addr
+            + LittleEndian::read_uint(&self.offsets[b..m], BYTES_PER_OFFSET) as usize;
+        let end = self.strings_addr
+            + LittleEndian::read_uint(&self.offsets[m..e], BYTES_PER_OFFSET) as usize;
+
+        &str::from_utf8(&self.strings[begin..end]).unwrap()
     }
 }
 
@@ -151,6 +147,7 @@ impl StrVec {
         );
         let offsets_size = LittleEndian::read_u64(&buf);
         let strings_addr = bytes_read + offsets_size as usize;
+
         let mut offsets_data = vec![0u8; offsets_size as usize];
         handle = vec_file.take(offsets_size);
         bytes_read = handle.read(&mut offsets_data).unwrap_or(0);
@@ -161,7 +158,6 @@ impl StrVec {
             bytes_read,
             offsets_size
         );
-        let offsets = load::<Offset>(&offsets_data[..]);
 
         let strings = unsafe {
             Mmap::map(&OpenOptions::new().read(true).open(path).expect(&[
@@ -179,7 +175,7 @@ impl StrVec {
         StrVec {
             strings_addr: strings_addr,
             strings: strings,
-            offsets: offsets,
+            offsets: offsets_data,
         }
     }
 }
