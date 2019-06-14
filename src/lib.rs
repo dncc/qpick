@@ -115,8 +115,14 @@ pub struct SearchResult {
     pub query: Option<String>,
 }
 
-impl PartialOrd for SearchResult {
-    fn partial_cmp(&self, other: &SearchResult) -> Option<Ordering> {
+#[derive(Debug, Clone, Serialize)]
+pub struct IdResult {
+    pub id: u64, // query id unique globally
+    pub sc: f32,
+}
+
+impl PartialOrd for IdResult {
+    fn partial_cmp(&self, other: &IdResult) -> Option<Ordering> {
         if self.eq(&other) {
             self.id.partial_cmp(&other.id)
         } else {
@@ -125,8 +131,8 @@ impl PartialOrd for SearchResult {
     }
 }
 
-impl PartialEq for SearchResult {
-    fn eq(&self, other: &SearchResult) -> bool {
+impl PartialEq for IdResult {
+    fn eq(&self, other: &IdResult) -> bool {
         self.sc == other.sc
     }
 }
@@ -415,20 +421,21 @@ impl Qpick {
             norm += sh_res.norm;
         }
 
-        let mut res_data: Vec<(u64, f32)> = res_data
+        let mut res_data: Vec<IdResult> = res_data
             .into_iter()
             .filter(|(_, sc)| *sc / norm > LOW_SIM_THRESH)
-            .collect::<Vec<(u64, f32)>>();
-        res_data.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse());
+            .map(|(id, sc)| IdResult { id: id, sc: sc })
+            .collect::<Vec<IdResult>>();
+        res_data.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse());
 
         Ok(res_data
             .into_iter()
             .take(count.unwrap_or(100))
-            .map(|(id, sc)| {
-                let (sh_qid, sh_id) = ids_map.get(&id).unwrap();
+            .map(|r| {
+                let (sh_qid, sh_id) = ids_map.get(&r.id).unwrap();
                 SearchResult {
-                    id: id,
-                    sc: util::max(1.0 - sc / norm, 0.0),
+                    id: r.id,
+                    sc: util::max(1.0 - r.sc / norm, 0.0),
                     query: if let Some(ref i2q) = &self.shards[*sh_id as usize].i2q {
                         Some(i2q[*sh_qid as usize].to_string())
                     } else {
