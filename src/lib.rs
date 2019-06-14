@@ -390,7 +390,7 @@ impl Qpick {
     ) -> Result<Vec<SearchResult>, Error> {
         let shards_ngrams = self.shard_ngrams(ngrams);
         let shard_results: Vec<ShardResults> = shards_ngrams
-            .par_iter()
+            .iter()
             .map(|(shard_id, ngrams)| {
                 get_query_ids(
                     ngrams,
