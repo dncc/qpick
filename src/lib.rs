@@ -424,7 +424,7 @@ impl Qpick {
 
         let mut res_data: Vec<IdResult> = res_data
             .into_iter()
-            .filter(|(_, sc)| *sc / norm > LOW_SIM_THRESH)
+            .filter(|(_, sc)| *sc / norm > filter)
             .map(|(id, sc)| IdResult { id: id, sc: sc })
             .collect::<Vec<IdResult>>();
         res_data.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less).reverse());
