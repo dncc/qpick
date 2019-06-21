@@ -143,7 +143,7 @@ fn get_idfs(ngrams: &HashMap<String, f32>, map: &fst::Map) -> HashMap<String, (f
     let n = *get_shard_size() as f32;
     for (ngram, ntr) in ngrams {
         // IDF score for the ngram
-        let mut idf: f32;
+        let idf: f32;
         match get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
             Some((_addr, len)) => {
@@ -183,8 +183,9 @@ fn get_query_ids(
             idf = (n / len as f32).log(2.0);
             let mem_addr = addr as usize * id_size;
             let ids_arr = read_bucket(ifd, mem_addr, len as usize, id_size);
-            for &(shard_query_id, shard_id, trel) in ids_arr.iter() {
-                let tr = util::min((trel as f32) / 100.0, *ngram_tr);
+            for &(shard_query_id, shard_id, _trel) in ids_arr.iter() {
+                // let tr = util::min((trel as f32) / 100.0, *ngram_tr);
+                let tr = *ngram_tr;
                 results.push(SearchShardResult {
                     id: util::shard_id_2_query_id(shard_query_id as u64, shard_id, nr_shards),
                     sc: tr * idf,

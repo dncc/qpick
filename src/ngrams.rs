@@ -43,7 +43,7 @@ fn bow_ngrams(words: Vec<(String, f32)>, ngrams: &mut FnvHashMap<String, f32>) {
             let tr_threshold = 2.0 / words.len() as f32;
             for i in 0..words.len() - 2 {
                 for j in i + 2..words.len() {
-                    let mut tr = words[i].1 + words[j].1;
+                    let tr = words[i].1 + words[j].1;
                     if tr < tr_threshold {
                         continue;
                     }
