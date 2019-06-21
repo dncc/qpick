@@ -96,11 +96,36 @@ pub struct DistanceResult {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchShardResult {
-    pub id: u64, // query id unique globally
-    pub sc: f32,
-    pub query: Option<String>,
-    pub sh_id: u8,   // shard id
-    pub sh_qid: u32, // query id unique on a shard level
+    id: u64, // query id unique globally
+    query: Option<String>,
+    sh_id: u8,   // shard id
+    sh_qid: u32, // query id unique on a shard level
+    sc: f32,
+}
+
+impl SearchShardResult {
+    #[inline]
+    pub fn new(
+        shard_query_id: u32,
+        shard_id: u8,
+        nr_shards: usize,
+        query: Option<String>,
+        ngram_tr: f32,
+        tr: f32,
+        idf: f32,
+        with_tfidf: bool,
+    ) -> Self {
+        let id = util::shard_id_2_query_id(shard_query_id as u64, shard_id, nr_shards);
+        let tf = util::min(if with_tfidf { tr } else { std::f32::INFINITY }, ngram_tr);
+
+        SearchShardResult {
+            id: id,
+            sc: tf * idf,
+            query: query,
+            sh_id: shard_id,
+            sh_qid: shard_query_id,
+        }
+    }
 }
 
 struct ShardResults {
@@ -143,7 +168,7 @@ fn get_idfs(ngrams: &HashMap<String, f32>, map: &fst::Map) -> HashMap<String, (f
     let n = *get_shard_size() as f32;
     for (ngram, ntr) in ngrams {
         // IDF score for the ngram
-        let mut idf: f32;
+        let idf: f32;
         match get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
             Some((_addr, len)) => {
@@ -162,11 +187,12 @@ fn get_idfs(ngrams: &HashMap<String, f32>, map: &fst::Map) -> HashMap<String, (f
 }
 
 #[inline]
-fn get_query_ids(
+fn get_shard_results(
     ngrams: &HashMap<String, f32>,
     map: &fst::Map,
     ifd: &memmap::Mmap,
     id_size: usize,
+    with_tfidf: bool,
 ) -> Result<ShardResults, Error> {
     let n = *get_shard_size() as f32;
     let nr_shards = *get_nr_shards();
@@ -184,14 +210,16 @@ fn get_query_ids(
             let mem_addr = addr as usize * id_size;
             let ids_arr = read_bucket(ifd, mem_addr, len as usize, id_size);
             for &(shard_query_id, shard_id, trel) in ids_arr.iter() {
-                let tr = util::min((trel as f32) / 100.0, *ngram_tr);
-                results.push(SearchShardResult {
-                    id: util::shard_id_2_query_id(shard_query_id as u64, shard_id, nr_shards),
-                    sc: tr * idf,
-                    query: None,
-                    sh_id: shard_id,
-                    sh_qid: shard_query_id,
-                });
+                results.push(SearchShardResult::new(
+                    shard_query_id,
+                    shard_id,
+                    nr_shards,
+                    None,
+                    *ngram_tr,
+                    trel as f32 / 100.0,
+                    idf,
+                    with_tfidf,
+                ));
             }
         }
         // normalization score
@@ -389,20 +417,22 @@ impl Qpick {
         return shards_ngrams;
     }
 
-    fn get_ids(
+    fn get_matches(
         &self,
         ngrams: &FnvHashMap<String, f32>,
         count: Option<usize>,
+        with_tfidf: bool,
     ) -> Result<Vec<SearchResult>, Error> {
         let shards_ngrams = self.shard_ngrams(ngrams);
         let shard_results: Vec<ShardResults> = shards_ngrams
             .iter()
             .map(|(shard_id, ngrams)| {
-                get_query_ids(
+                get_shard_results(
                     ngrams,
                     &self.shards[*shard_id].map,
                     &self.shards[*shard_id].shard,
                     self.id_size,
+                    with_tfidf,
                 ).unwrap()
             })
             .collect();
@@ -436,11 +466,10 @@ impl Qpick {
                 SearchResult {
                     id: r.id,
                     sc: util::max(1.0 - r.sc / norm, 0.0),
-                    query: if let Some(ref i2q) = &self.shards[*sh_id as usize].i2q {
-                        Some(i2q[*sh_qid as usize].to_string())
-                    } else {
-                        None
-                    },
+                    query: self.shards[*sh_id as usize]
+                        .i2q
+                        .as_ref()
+                        .map(|i2q| i2q[*sh_qid as usize].to_string()),
                 }
             })
             .collect())
@@ -489,7 +518,7 @@ impl Qpick {
         return dist_results;
     }
 
-    pub fn get(&self, query: &str, count: u32) -> Vec<SearchResult> {
+    pub fn get(&self, query: &str, count: u32, with_tfidf: bool) -> Vec<SearchResult> {
         if query == "" || count == 0 {
             return vec![];
         }
@@ -497,10 +526,25 @@ impl Qpick {
         let ref ngrams: FnvHashMap<String, f32> =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
-        match self.get_ids(ngrams, Some(count as usize)) {
+        match self.get_matches(ngrams, Some(count as usize), with_tfidf) {
             Ok(ids) => ids,
             Err(err) => panic!("Failed to get ids with: {message}", message = err),
         }
+    }
+
+    pub fn get_search_results_as_string(
+        &self,
+        query: &str,
+        count: u32,
+        with_tfidf: bool,
+    ) -> String {
+        let mut res: Vec<(u64, f32, String)> = self.get(query, 30 * count, with_tfidf)
+            .into_iter()
+            .map(|s| (s.id, s.sc, s.query.unwrap_or("".to_string())))
+            .collect();
+        res.truncate(count as usize);
+
+        serde_json::to_string(&res).unwrap()
     }
 
     pub fn merge(&self) -> Result<(), Error> {
@@ -508,8 +552,8 @@ impl Qpick {
         merge::merge(&self.path, self.config.nr_shards as usize)
     }
 
-    pub fn get_search_results(&self, query: &str, count: u32) -> SearchResults {
-        SearchResults::new(self.get(query, count).into_iter())
+    pub fn get_search_results(&self, query: &str, count: u32, with_tfidf: bool) -> SearchResults {
+        SearchResults::new(self.get(query, count, with_tfidf).into_iter())
     }
 
     pub fn get_dist_results(&self, query: &str, candidates: &Vec<String>) -> DistResults {

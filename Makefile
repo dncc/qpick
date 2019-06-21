@@ -16,10 +16,11 @@ install/req:
 					tmux send -t qpick:${TMUXW} 'apt-get update && apt-get install -y libxml2-dev python3-pip' ENTER && \
 					tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH} && source env.sh' ENTER && \
 					tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH}/scripts' ENTER && \
-					tmux send -t qpick:${TMUXW} 'pip3 install pip --upgrade --ignore-installed' ENTER && \
+ 					tmux send -t qpick:${TMUXW} 'export LC_ALL="en_US.UTF-8"' ENTER && \
+					tmux send -t qpick:${TMUXW} 'python3 -m pip install pip --upgrade --ignore-installed' ENTER && \
 					tmux send -t qpick:${TMUXW} 'PIP_INDEX_URL=\$$PIP_INDEX_URL \
 									   PIP_TRUSTED_HOST=\$$PIP_TRUSTED_HOST \
-									   pip3 install -v -q -r requirements.txt --ignore-installed' ENTER"
+									   python3 -m pip install -v -q -r requirements.txt --ignore-installed' ENTER"
 
 .PHONY: download/data
 download/data:
@@ -28,8 +29,10 @@ download/data:
 										|| tmux new-window -n ${TMUXW} && \
 					tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH} && source env.sh' ENTER && \
 					tmux send -t qpick:${TMUXW} 'cd ${INDEX_REMOTE_PATH}' ENTER && \
-					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_DATA/qpick_input.woid.gz .' ENTER && \
-					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_DATA/gt/tq32.merged .' ENTER"
+					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_DATA/gt/tq32.merged .' ENTER && \
+					tmux send -t qpick:${TMUXW} 'aws s3 cp \$$INDEX_S3_DATA/gt/input_queries.txt .' ENTER && \
+					tmux send -t qpick:${TMUXW} 'aws s3 cp \
+						\$$INDEX_S3_DATA/shard-input/20190602/qpick_input.woid.gz .' ENTER"
 
 .PHONY: download/ws
 download/ws:

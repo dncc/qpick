@@ -17,6 +17,6 @@ def rpc_call(url, method, args):
 # start go rpc server
 # ./main -port 6007 -index ../index
 url = 'http://localhost:6007/rpc'
-queries = ['berserk episode']
-args = {'Q': json.dumps(queries), 'C': 100}
-print(rpc_call(url, "QPickRPCService.NGet", args).get('result', []))
+query = 'changing mac os menu bar'
+args = {'Q': query, 'C': 100, 'TFIDF': 1}
+print(rpc_call(url, "QPickRPCService.Get", args).get('result', []))

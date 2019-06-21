@@ -97,11 +97,12 @@ class Qpick(object):
         self._ptr = ffi.gc(s, lib.qpick_free)
 
     # qpick.get('a')
-    def get(self, query, count=100):
+    def get(self, query, count=100, with_tfidf=True):
         if type(query) == str:
             query = query.encode('utf-8')
+        with_tfidf = int(with_tfidf)
+        res_ptr = lib.qpick_get(self._ptr, query, count, with_tfidf)
 
-        res_ptr = lib.qpick_get(self._ptr, query, count)
         return QpickSearchResults(res_ptr,
                                 lib.qpick_search_iter_next,
                                 lib.qpick_search_results_free,

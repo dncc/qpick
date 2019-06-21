@@ -29,6 +29,7 @@ var (
 type Args struct {
 	Q string
 	C uint32
+	TFIDF uint8
 }
 
 //Represents service QPickRPCService with method Multiply
@@ -38,15 +39,8 @@ type QPickRPCService int
 // type Result int
 type Result string
 
-func (t *QPickRPCService) NGet(r *http.Request, args *Args, result *Result) error {
-	var res = C.qpick_nget_as_string(qpick, C.CString(args.Q), C.uint32_t(args.C))
-	*result = Result(C.GoString(res))
-	log.Printf("Q: %v", args.Q)
-	return nil
-}
-
 func (t *QPickRPCService) Get(r *http.Request, args *Args, result *Result) error {
-	var res = C.qpick_get_as_string(qpick, C.CString(args.Q), C.uint32_t(args.C))
+	var res = C.qpick_get_as_string(qpick, C.CString(args.Q), C.uint32_t(args.C), C.uint8_t(args.TFIDF))
 	*result = Result(C.GoString(res))
 	return nil
 }

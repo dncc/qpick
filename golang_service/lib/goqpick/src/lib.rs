@@ -67,7 +67,7 @@ pub extern "C" fn qpick_init_with_shard_range(
     end_shard: libc::uint32_t,
 ) -> *mut Qpick {
     let path = cstr_to_str(path);
-    let qpick = Qpick::from_path_with_shard_range(path.to_string(), (start_shard..end_shard));
+    let qpick = Qpick::from_path_with_shard_range(path.to_string(), start_shard..end_shard);
     to_raw_ptr(qpick)
 }
 make_free_fn!(qpick_free, *mut Qpick);
@@ -82,21 +82,10 @@ pub extern "C" fn qpick_get_as_string(
     ptr: *mut Qpick,
     query: *mut libc::c_char,
     count: libc::uint32_t,
+    with_tfidf: libc::uint8_t,
 ) -> *const libc::c_char {
     let query = cstr_to_str(query);
-    let s = ref_from_ptr!(ptr).get_str(query, count);
-    CString::new(s).unwrap().into_raw()
-}
-
-#[no_mangle]
-pub extern "C" fn qpick_nget_as_string(
-    ptr: *mut Qpick,
-    queries: *mut libc::c_char,
-    count: libc::uint32_t,
-) -> *const libc::c_char {
-    let queries = cstr_to_str(queries);
-    let s = ref_from_ptr!(ptr).nget_str(queries, count);
-
+    let s = ref_from_ptr!(ptr).get_search_results_as_string(query, count, with_tfidf != 0);
     CString::new(s).unwrap().into_raw()
 }
 
@@ -144,9 +133,10 @@ pub extern "C" fn qpick_get(
     ptr: *mut Qpick,
     query: *mut libc::c_char,
     count: libc::uint32_t,
+    with_tfidf: libc::uint8_t,
 ) -> *mut qpick::SearchResults {
     let query = cstr_to_str(query);
-    let res = ref_from_ptr!(ptr).get_search_results(query, count);
+    let res = ref_from_ptr!(ptr).get_search_results(query, count, with_tfidf != 0);
     to_raw_ptr(res)
 }
 
@@ -162,13 +152,4 @@ pub extern "C" fn query_vec_push(ptr: *mut Vec<String>, query: *mut libc::c_char
     let query = cstr_to_str(query);
 
     mutref_from_ptr!(ptr).push(query.to_string());
-}
-
-#[no_mangle]
-pub extern "C" fn qpick_nget(
-    ptr: *mut Qpick,
-    queries: *mut Vec<String>,
-    count: libc::uint32_t,
-) -> *mut qpick::SearchResults {
-    to_raw_ptr(ref_from_ptr!(ptr).nget_search_results(ref_from_ptr!(queries), count))
 }

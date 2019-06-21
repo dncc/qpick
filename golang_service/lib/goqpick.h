@@ -5,8 +5,7 @@ typedef struct Qpick Qpick;
 Qpick* qpick_init(char*);
 Qpick* qpick_init_with_shard_range(char*, uint32_t, uint32_t);
 void qpick_free(Qpick*);
-char* qpick_get_as_string(Qpick*, char*, uint32_t);
-char* qpick_nget_as_string(Qpick*, char*, uint32_t);
+char* qpick_get_as_string(Qpick*, char*, uint32_t, uint8_t);
 void string_free(char*);
 
 /**
@@ -32,6 +31,4 @@ typedef struct QpickQueryVec QpickQueryVec;
 QpickQueryVec* query_vec_init();
 void query_vec_free(QpickQueryVec*);
 void query_vec_push(QpickQueryVec*, char*);
-
-SearchResults* qpick_nget(Qpick*, QpickQueryVec*, uint32_t);
 

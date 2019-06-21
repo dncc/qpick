@@ -93,14 +93,16 @@ pub extern "C" fn qpick_shard(
     let file_path = cstr_to_str(file_path);
     let output_dir = cstr_to_str(output_dir);
 
-    let r = shard::shard(
+    match shard::shard(
         &file_path.to_string(),
         nr_shards as usize,
         &output_dir.to_string(),
         ref_from_ptr!(prefixes),
         create_i2q != 0,
-    );
-    println!("{:?}", r);
+    ) {
+        Ok(r) => println!("{:?}", r),
+        Err(err) => println!("{:?}", err),
+    };
 }
 
 #[no_mangle]
@@ -113,13 +115,15 @@ pub extern "C" fn qpick_index(
     let input_dir = cstr_to_str(input_dir);
     let output_dir = cstr_to_str(output_dir);
 
-    let r = builder::index(
+    match builder::index(
         &input_dir.to_string(),
         first_shard as usize,
         last_shard as usize,
         &output_dir.to_string(),
-    );
-    println!("{:?}", r);
+    ) {
+        Ok(r) => println!("{:?}", r),
+        Err(err) => println!("{:?}", err),
+    };
 }
 
 #[no_mangle]
@@ -224,9 +228,11 @@ pub extern "C" fn qpick_get(
     ptr: *mut Qpick,
     query: *mut libc::c_char,
     count: libc::uint32_t,
+    with_tfidf: libc::uint8_t,
 ) -> *mut qpick::SearchResults {
     let query = cstr_to_str(query);
-    let res = ref_from_ptr!(ptr).get_search_results(query, count);
+    let res = ref_from_ptr!(ptr).get_search_results(query, count, with_tfidf != 0);
+
     to_raw_ptr(res)
 }
 
