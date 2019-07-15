@@ -11,6 +11,7 @@ extern crate fs2;
 extern crate memmap;
 extern crate pbr;
 extern crate rand;
+extern crate regex;
 extern crate serde_json;
 
 use std::sync::Arc;
@@ -209,6 +210,7 @@ fn get_shard_results(
             idf = (n / len as f32).log(2.0);
             let mem_addr = addr as usize * id_size;
             let ids_arr = read_bucket(ifd, mem_addr, len as usize, id_size);
+
             for &(shard_query_id, shard_id, trel) in ids_arr.iter() {
                 results.push(SearchShardResult::new(
                     shard_query_id,
@@ -424,6 +426,7 @@ impl Qpick {
         with_tfidf: bool,
     ) -> Result<Vec<SearchResult>, Error> {
         let shards_ngrams = self.shard_ngrams(ngrams);
+
         let shard_results: Vec<ShardResults> = shards_ngrams
             .iter()
             .map(|(shard_id, ngrams)| {
@@ -463,13 +466,15 @@ impl Qpick {
             .take(count.unwrap_or(100))
             .map(|r| {
                 let (sh_qid, sh_id) = ids_map.get(&r.id).unwrap();
+                let query = self.shards[*sh_id as usize]
+                    .i2q
+                    .as_ref()
+                    .map(|i2q| i2q[*sh_qid as usize].to_string());
+
                 SearchResult {
                     id: r.id,
                     sc: util::max(1.0 - r.sc / norm, 0.0),
-                    query: self.shards[*sh_id as usize]
-                        .i2q
-                        .as_ref()
-                        .map(|i2q| i2q[*sh_qid as usize].to_string()),
+                    query: query,
                 }
             })
             .collect())

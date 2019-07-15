@@ -183,7 +183,6 @@ pub fn shard(
                         continue;
                     }
 
-                    // println!("wid {:?}, shid {:?}, qid {:?}, qshid: {:?}, q {:?}", worker_id, shard_id, line_count-1, query_shard_id, line);
                     let line = line.unwrap();
                     let (query_type, query) = match parse_query_line(&line) {
                         Ok((query_type, query)) => (query_type, query),
