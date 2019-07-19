@@ -38,28 +38,28 @@ class QpickResults(object):
 
 class QpickSearchResults(QpickResults):
     def __next__(self):
-        itm = self._next_fn(self._ptr)
-        if itm == ffi.NULL:
+        item = self._next_fn(self._ptr)
+        if item == ffi.NULL:
             self._free()
             raise StopIteration
 
-        qid = itm.qid
-        sc = itm.sc
-        query = ffi.string(itm.query).decode('utf8')
-        self._free_item_fn(itm)
+        query_id = item.query_id
+        dist = item.dist
+        query = ffi.string(item.query).decode('utf8')
+        self._free_item_fn(item)
 
-        return (qid, sc, query)
+        return (query_id, dist, query)
 
 class QpickDistResults(QpickResults):
     def __next__(self):
-        itm = self._next_fn(self._ptr)
-        if itm == ffi.NULL:
+        item = self._next_fn(self._ptr)
+        if item == ffi.NULL:
             self._free()
             raise StopIteration
 
-        query = ffi.string(itm.query).decode('utf8')
-        dist = itm.dist
-        self._free_item_fn(itm)
+        query = ffi.string(item.query).decode('utf8')
+        dist = item.dist
+        self._free_item_fn(item)
 
         return (query, dist)
 

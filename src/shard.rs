@@ -19,6 +19,7 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use std::iter::FromIterator;
 use std::collections::{HashMap, HashSet};
+use fnv::FnvHashMap;
 // use std::sync::{Arc, Mutex};
 
 const WRITE_BUFFER_SIZE: usize = 5 * 1024;
@@ -206,12 +207,14 @@ pub fn shard(
                         continue;
                     }
 
-                    let ngrams = &ngrams::parse(&query, &stopwords, &tr_map);
-                    for (ngram, sc) in ngrams {
+                    let (ngrams, trs, _, _, _) = &ngrams::parse(&query, &stopwords, &tr_map);
+                    let ngrams_trs: FnvHashMap<_, _> =
+                        ngrams.into_iter().zip(trs.into_iter()).collect();
+                    for (ngram, sc) in ngrams_trs {
                         let shard_ngram_id =
                             util::jump_consistent_hash_str(ngram, number_of_shards as u32);
 
-                        let qsc = (sc * 100.0).round() as u8;
+                        let qsc = (*sc * 100.0).round() as u8;
 
                         // Note: writes a sharded query id (u32), not the original query id (u64).
                         // With query ids that take more than 4 bytes each, there is an overflow of

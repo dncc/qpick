@@ -10,6 +10,19 @@ pub const WORDS_PER_QUERY: usize = 15;
 
 const PUNCT_SYMBOLS: &str = "[/@#!,'?:();.+]";
 
+macro_rules! update {
+    ($ngrams: ident,
+     $relevs: ident,
+     $ngrams_ids: ident,
+     $ngram: expr,
+     $relev: expr,
+     $indices: expr) => {
+        $relevs.push($relev);
+        $ngrams.push($ngram.clone());
+        $ngrams_ids.insert($ngram.clone(), $indices);
+    };
+}
+
 macro_rules! vec_push_str {
     // Base case:
     ($v:ident, $w:expr) => (
@@ -142,9 +155,9 @@ pub fn get_stop_ngrams(
     rels: &Vec<f32>,
     word_idx: &mut Vec<usize>,
     stop_idx: &Vec<usize>,
-) -> Vec<(String, Vec<usize>, f32)> {
+) -> Vec<(String, f32, Vec<usize>)> {
     let words_len = words.len();
-    let mut stop_ngrams: Vec<(String, Vec<usize>, f32)> = Vec::with_capacity(words_len);
+    let mut stop_ngrams: Vec<(String, f32, Vec<usize>)> = Vec::with_capacity(words_len);
     let last_word_idx = words_len - 1;
 
     word_idx.reverse();
@@ -165,13 +178,13 @@ pub fn get_stop_ngrams(
             linked_idx.insert(*i);
             linked_idx.insert(j);
             if !stop_idx_set.contains(&j) || j == last_word_idx {
-                stop_ngrams.push((bow2(&words[*i], &words[j]), vec![*i, j], rels[*i] + rels[j]));
+                stop_ngrams.push((bow2(&words[*i], &words[j]), rels[*i] + rels[j], vec![*i, j]));
             } else {
                 linked_idx.insert(j + 1);
                 stop_ngrams.push((
                     bow3(&words[*i], &words[j], &words[j + 1]),
-                    vec![*i, j, j + 1],
                     rels[*i] + rels[j] + rels[j + 1],
+                    vec![*i, j, j + 1],
                 ));
             }
 
@@ -184,7 +197,7 @@ pub fn get_stop_ngrams(
             if !word_idx.is_empty() {
                 let mut next_i = word_idx.pop().unwrap();
                 while next_i < j && !linked_idx.contains(&next_i) {
-                    stop_ngrams.push((words[next_i].to_string(), vec![next_i], rels[next_i]));
+                    stop_ngrams.push((words[next_i].to_string(), rels[next_i], vec![next_i]));
                     next_i = word_idx.pop().unwrap();
                 }
             }
@@ -196,8 +209,8 @@ pub fn get_stop_ngrams(
                     linked_idx.insert(j);
                     stop_ngrams.push((
                         bow2(&words[j], &words[*i]),
-                        vec![j, *i],
                         rels[j] + rels[*i],
+                        vec![j, *i],
                     ));
                 } else {
                     skip_idx.insert(k);
@@ -205,8 +218,8 @@ pub fn get_stop_ngrams(
                     linked_idx.insert(*i);
                     stop_ngrams.push((
                         bow2(&words[*i], &words[k]),
-                        vec![*i, k],
                         rels[*i] + rels[k],
+                        vec![*i, k],
                     ));
                 }
 
@@ -214,7 +227,7 @@ pub fn get_stop_ngrams(
             } else if stop_idx_set.contains(&j) && !stop_idx_set.contains(&k) {
                 linked_idx.insert(k);
                 linked_idx.insert(*i);
-                stop_ngrams.push((bow2(&words[*i], &words[k]), vec![*i, k], rels[*i] + rels[k]));
+                stop_ngrams.push((bow2(&words[*i], &words[k]), rels[*i] + rels[k], vec![*i, k]));
 
             // both j & k are stopwords, since j is linked, take k
             } else if stop_idx_set.contains(&j) && stop_idx_set.contains(&k) {
@@ -224,8 +237,8 @@ pub fn get_stop_ngrams(
                 if k == last_word_idx || stop_idx_set.contains(&(k + 1)) {
                     stop_ngrams.push((
                         bow2(&words[*i], &words[k]),
-                        vec![*i, k],
                         rels[*i] + rels[k],
+                        vec![*i, k],
                     ));
 
                 // take also k+1 if k is not the last word
@@ -234,8 +247,8 @@ pub fn get_stop_ngrams(
                     linked_idx.insert(k + 1);
                     stop_ngrams.push((
                         bow3(&words[*i], &words[k], &words[k + 1]),
-                        vec![*i, k, k + 1],
                         rels[*i] + rels[k] + rels[k + 1],
+                        vec![*i, k, k + 1],
                     ));
                 }
 
@@ -246,20 +259,20 @@ pub fn get_stop_ngrams(
                     linked_idx.insert(j);
                     stop_ngrams.push((
                         bow2(&words[j], &words[*i]),
-                        vec![j, *i],
                         rels[j] + rels[*i],
+                        vec![j, *i],
                     ));
                 } else {
                     linked_idx.insert(k);
                     linked_idx.insert(*i);
                     if !linked_idx.contains(&j) {
-                        stop_ngrams.push((words[j].to_string(), vec![j], rels[j]));
+                        stop_ngrams.push((words[j].to_string(), rels[j], vec![j]));
                         linked_idx.insert(j);
                     }
                     stop_ngrams.push((
                         bow2(&words[*i], &words[k]),
-                        vec![*i, k],
                         rels[*i] + rels[k],
+                        vec![*i, k],
                     ));
                 }
             }
@@ -271,7 +284,7 @@ pub fn get_stop_ngrams(
             if !word_idx.is_empty() {
                 let mut next_i = word_idx.pop().unwrap();
                 while next_i < j && !linked_idx.contains(&next_i) {
-                    stop_ngrams.push((words[next_i].to_string(), vec![next_i], rels[next_i]));
+                    stop_ngrams.push((words[next_i].to_string(), rels[next_i], vec![next_i]));
                     next_i = word_idx.pop().unwrap();
                 }
             }
@@ -279,22 +292,22 @@ pub fn get_stop_ngrams(
             if !linked_idx.contains(&j) {
                 linked_idx.insert(*i);
                 linked_idx.insert(j);
-                stop_ngrams.push((bow2(&words[j], &words[*i]), vec![j, *i], rels[j] + rels[*i]));
+                stop_ngrams.push((bow2(&words[j], &words[*i]), rels[j] + rels[*i], vec![j, *i]));
 
             // previous word is in ngram, add this word to it and exit
             } else {
                 linked_idx.insert(*i);
-                let (ngram, mut ngram_idx, mut ngram_rel) = stop_ngrams.pop().unwrap();
-                ngram_idx.push(*i);
+                let (ngram, mut ngram_rel, mut ngram_idx) = stop_ngrams.pop().unwrap();
                 ngram_rel += rels[*i];
-                stop_ngrams.push((bow2(&ngram, &words[*i]), ngram_idx, ngram_rel));
+                ngram_idx.push(*i);
+                stop_ngrams.push((bow2(&ngram, &words[*i]), ngram_rel, ngram_idx));
             }
         }
     }
 
     while let Some(next_i) = word_idx.pop() {
         if !linked_idx.contains(&next_i) {
-            stop_ngrams.push((words[next_i].to_string(), vec![next_i], rels[next_i]));
+            stop_ngrams.push((words[next_i].to_string(), rels[next_i], vec![next_i]));
         }
     }
 
@@ -320,89 +333,142 @@ pub fn parse(
     query: &str,
     stopwords: &FnvHashSet<String>,
     tr_map: &fst::Map,
-) -> FnvHashMap<String, f32> {
-    let mut ngrams: FnvHashMap<String, f32> = FnvHashMap::default();
+) -> (
+    Vec<String>,
+    Vec<f32>,
+    FnvHashMap<String, Vec<usize>>,
+    Vec<String>,
+    Vec<f32>,
+) {
+    let mut ngrams_relevs: Vec<f32> = Vec::with_capacity(WORDS_PER_QUERY * 3);
+    let mut ngrams: Vec<String> = Vec::with_capacity(WORDS_PER_QUERY * 3);
+    let mut ngrams_ids: FnvHashMap<String, Vec<usize>> = FnvHashMap::default();
 
     let words = get_norm_query_vec(query);
     if words.is_empty() {
-        return ngrams;
+        return (ngrams, ngrams_relevs, ngrams_ids, words, vec![]);
     }
 
     let words_len = words.len();
     if words_len == 1 {
-        ngrams.insert(words[0].clone(), 1.0);
-        return ngrams;
+        update!(
+            ngrams,
+            ngrams_relevs,
+            ngrams_ids,
+            words[0].clone(),
+            1.0,
+            vec![0]
+        );
+        return (ngrams, ngrams_relevs, ngrams_ids, words, vec![1.0]);
     }
 
-    let (mut word_idx, stop_idx, rels) = get_word_relevances(&words, tr_map, stopwords);
-    let stop_ngrams = get_stop_ngrams(&words, &rels, &mut word_idx, &stop_idx);
+    let (mut word_idx, stop_idx, words_relevs) = get_word_relevances(&words, tr_map, stopwords);
+    let stop_ngrams = get_stop_ngrams(&words, &words_relevs, &mut word_idx, &stop_idx);
+
     let stop_ngrams_len = stop_ngrams.len();
     let word_thresh = 1.0 / util::max(2.0, words_len as f32 - 1.0);
+
+    let mut words_vec = words
+        .iter()
+        .enumerate()
+        .zip(words_relevs.iter())
+        .map(|(i_w, r)| (i_w.0, i_w.1.to_string(), *r))
+        .collect::<Vec<(usize, String, f32)>>();
+    words_vec.sort_by(|t1, t2| t1.2.partial_cmp(&t2.2).unwrap_or(Ordering::Less).reverse());
 
     // bigrams of words with n words in between:
     //  a b c d e f-> [ab, ac, ad, ..., bc, bd, ..., ef]
     let ngram_thresh = 1.8 / words_len as f32;
     for i in 0..stop_ngrams_len {
-        if stop_ngrams[i].1.len() > 1 && stop_ngrams[i].2 > ngram_thresh {
-            ngrams.insert(stop_ngrams[i].0.clone(), stop_ngrams[i].2);
+        if stop_ngrams[i].2.len() > 1 && stop_ngrams[i].1 > ngram_thresh {
+            update!(
+                ngrams,
+                ngrams_relevs,
+                ngrams_ids,
+                stop_ngrams[i].0.clone(),
+                stop_ngrams[i].1,
+                stop_ngrams[i].2.clone()
+            );
         }
 
         for j in i + 1..stop_ngrams_len {
-            let ngram = bow2(&stop_ngrams[i].0, &stop_ngrams[j].0);
-            if ngrams.contains_key(&ngram) {
-                continue;
-            }
             let step = j - i - 1;
-
-            let ntr = (1.0 - step as f32 / 100.0) * (stop_ngrams[i].2 + stop_ngrams[j].2);
+            let ntr = (1.0 - step as f32 / 100.0) * (stop_ngrams[i].1 + stop_ngrams[j].1);
             if step < 3 || ntr >= ngram_thresh {
-                ngrams.insert(ngram, ntr);
+                let ngram = bow2(&stop_ngrams[i].0, &stop_ngrams[j].0);
+                if ngrams_ids.contains_key(&ngram) {
+                    continue;
+                }
+                let mut ngram_ids_vec = stop_ngrams[i].2.clone();
+                ngram_ids_vec.extend(stop_ngrams[j].2.clone());
+                update!(ngrams, ngrams_relevs, ngrams_ids, ngram, ntr, ngram_ids_vec);
             }
         }
     }
 
-    let mut words_rels = words
-        .iter()
-        .zip(rels.iter())
-        .map(|(s, r)| (s.to_string(), *r))
-        .collect::<Vec<(String, f32)>>();
-    words_rels.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Less).reverse());
-
-    if words_len <= 3 || words_rels[0].1 > word_thresh {
+    if words_len <= 3 || words_vec[0].2 > word_thresh {
         // insert the most relevant word
-        ngrams.insert(words_rels[0].0.clone(), words_rels[0].1);
+        update!(
+            ngrams,
+            ngrams_relevs,
+            ngrams_ids,
+            words_vec[0].1.clone(),
+            words_vec[0].2,
+            vec![words_vec[0].0]
+        );
     }
 
     if words_len > 3 {
         // ngram with 3 most relevant words
-        ngrams.insert(
-            bow3(&words_rels[0].0, &words_rels[1].0, &words_rels[2].0),
-            &words_rels[0].1 + &words_rels[1].1 + &words_rels[2].1,
-        );
-        // ngram with 2 most relevant words
-        ngrams.insert(
-            bow2(&words_rels[0].0, &words_rels[1].0),
-            &words_rels[0].1 + &words_rels[1].1,
+        update!(
+            ngrams,
+            ngrams_relevs,
+            ngrams_ids,
+            bow3(
+                &words_vec[0].1.clone(),
+                &words_vec[1].1.clone(),
+                &words_vec[2].1.clone()
+            ),
+            words_vec[0].2 + words_vec[1].2 + words_vec[2].2,
+            vec![words_vec[0].0, words_vec[1].0, words_vec[2].0]
         );
 
-        if let Some(last) = words_rels.pop() {
+        // ngram with 2 most relevant words
+        update!(
+            ngrams,
+            ngrams_relevs,
+            ngrams_ids,
+            bow2(&words_vec[0].1.clone(), &words_vec[1].1.clone()),
+            &words_vec[0].2 + &words_vec[1].2,
+            vec![words_vec[0].0, words_vec[1].0]
+        );
+
+        if let Some(last) = words_vec.pop() {
             // ngram with the most and the least relevant word
             // if any of the top 2 words is bellow the word_thresh
-            if words_rels[0].1 <= word_thresh {
-                ngrams.insert(
-                    bow2(&words_rels[0].0.clone(), &last.0.clone()),
-                    words_rels[0].1 + last.1,
+            if words_vec[0].2 <= word_thresh {
+                update!(
+                    ngrams,
+                    ngrams_relevs,
+                    ngrams_ids,
+                    bow2(&words_vec[0].1.clone(), &last.1.clone()),
+                    words_vec[0].2 + last.2,
+                    vec![words_vec[0].0, last.0]
                 );
             } else {
-                ngrams.insert(
-                    bow2(&words_rels[1].0.clone(), &last.0.clone()),
-                    words_rels[1].1 + last.1,
+                update!(
+                    ngrams,
+                    ngrams_relevs,
+                    ngrams_ids,
+                    bow2(&words_vec[1].1, &last.1.clone()),
+                    words_vec[1].2 + last.2,
+                    vec![words_vec[1].0, last.0]
                 );
             }
         }
     }
 
-    return ngrams;
+    (ngrams, ngrams_relevs, ngrams_ids, words, words_relevs)
 }
 
 #[cfg(test)]

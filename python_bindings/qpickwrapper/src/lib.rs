@@ -168,9 +168,9 @@ pub extern "C" fn string_free(s: *mut libc::c_char) {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct QpickSearchItem {
-    qid: libc::uint64_t,
-    sc: libc::c_float, //f32
+    query_id: libc::uint64_t,
     query: *mut libc::c_char,
+    dist: libc::c_float, //f32
 }
 
 // Declare a function that returns the next item from a qpick vector
@@ -180,8 +180,8 @@ pub extern "C" fn qpick_search_iter_next(ptr: *mut qpick::SearchResults) -> *mut
     // let mut iter = res.items.iter();
     match res.next() {
         Some(r) => to_raw_ptr(QpickSearchItem {
-            qid: r.id,
-            sc: r.sc,
+            query_id: r.query_id,
+            dist: r.dist,
             query: if let Some(query) = r.query {
                 str_to_cstr(&query)
             } else {

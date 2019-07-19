@@ -14,9 +14,9 @@ ffi.cdef("""
        Iterator
     **/
     typedef struct {
-        uint64_t  qid;
-        float     sc;
+        uint64_t  query_id;
         char*     query;
+        float     dist;
     } QpickSearchItem;
 
     typedef struct SearchResults SearchResults;

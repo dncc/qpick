@@ -60,7 +60,7 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
                 ""
             };
 
-            (r.id, r.sc, q.to_string())
+            (r.query_id, r.dist, q.to_string())
         })
         .collect();
 
