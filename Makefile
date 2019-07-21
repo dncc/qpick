@@ -98,6 +98,13 @@ ssh/build/pyqpick:
 	cd ${HOME_REMOTE_PATH}/qpick/python_bindings && \
 	python3 setup.py install"
 
+.PHONY: ssh/index
+ssh/index:
+	ssh root@${IP} "tmux send -t qpick:${TMUXW} 'PATH=~/.cargo/bin:${PATH}' ENTER && \
+		   tmux send -t qpick:${TMUXW} 'mkdir -p /raid/tmp && export TMPDIR=/raid/tmp' ENTER && \
+		   tmux send -t qpick:${TMUXW} 'cd ${PROJECT_REMOTE_PATH} && \
+			   cp scripts/index.sh index.sh && ./index.sh' ENTER"
+
 PHONY: ssh/install/test
 ssh/install/test: qpick/rsync install/req download/data download/ws ssh/build/dep ssh/build/qpick ssh/build/pyqpick
 
