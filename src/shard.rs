@@ -207,7 +207,7 @@ pub fn shard(
                         continue;
                     }
 
-                    let (ngrams, trs, _, _, _) = &ngrams::parse(&query, &stopwords, &tr_map);
+                    let (ngrams, trs, _, _, _, _) = &ngrams::parse(&query, &stopwords, &tr_map);
                     let ngrams_trs: FnvHashMap<_, _> =
                         ngrams.into_iter().zip(trs.into_iter()).collect();
                     for (ngram, sc) in ngrams_trs {

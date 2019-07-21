@@ -60,7 +60,7 @@ extern crate rayon;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
-pub const DIST_THRESH: f32 = 0.9501; // take only queries with smaller distance [0, 1]
+pub const DIST_THRESH: f32 = 0.951; // take only queries with smaller distance [0, 1]
 
 make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
 make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
@@ -102,6 +102,8 @@ pub struct SearchShardResult {
     pub shard_query_id: u32, // query id unique on a shard level
     pub ngram_idx: usize,    // index of an i-th ngram in a query
     pub ngram_rel: f32, // relevance of an i-th ngram: [∑₁_ₙ (query_word_relₖ)] * IDFᵢ
+    pub query_ngram_rel: f32,
+    pub ngram_iqf: f32, // inverse query frequency
     pub ngram: String,
     pub query: Option<String>,
 }
@@ -115,7 +117,7 @@ pub struct SearchResult {
 
 struct ShardResults {
     results: Vec<SearchShardResult>,
-    norm: f32,
+    _norm: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,7 +143,7 @@ impl PartialEq for KeywordMatchResult {
 }
 
 #[inline]
-fn get_idfs(ngrams: &Vec<(String, usize)>, map: &fst::Map) -> FnvHashMap<String, (usize, f32)> {
+fn _get_idfs(ngrams: &Vec<(String, usize)>, map: &fst::Map) -> FnvHashMap<String, (usize, f32)> {
     let mut idfs: FnvHashMap<String, (usize, f32)> = FnvHashMap::default();
     let n = *get_shard_size() as f32;
     for (ngram, ngram_idx) in ngrams {
@@ -179,25 +181,28 @@ fn get_shard_results(
     let mut norm: f32 = 0.0;
     let mut sres: Vec<SearchShardResult> = vec![];
     for (ngram, ngram_idx) in ngrams {
-        // IDF score for the ngram
-        let idf: f32;
+        // IQF inverse query
+        let ngram_iqf: f32;
         match get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
             Some((addr, len)) => {
                 // IDF for existing ngram
-                idf = (n / len as f32).log(2.0);
+                ngram_iqf = (n / len as f32).log(2.0);
                 let mem_addr = addr as usize * id_size;
-                for &(shard_query_id, shard_id, trel) in
+
+                for &(shard_query_id, shard_id, ngram_rel) in
                     read_bucket(ifd, mem_addr, len as usize, id_size).iter()
                 {
                     let query_id =
                         util::shard_id_2_query_id(shard_query_id as u64, shard_id, nr_shards);
-                    let tr = util::min((trel as f32) / 100.0, trs[*ngram_idx]);
+
                     sres.push(SearchShardResult {
                         query_id: query_id,
                         shard_id: shard_id,
                         shard_query_id: shard_query_id,
-                        ngram_rel: tr * idf,
+                        ngram_rel: ngram_rel as f32 / 100.0,
+                        query_ngram_rel: trs[*ngram_idx],
+                        ngram_iqf: ngram_iqf,
                         ngram_idx: *ngram_idx,
                         ngram: ngram.to_string(),
                         query: None,
@@ -205,16 +210,17 @@ fn get_shard_results(
                 }
             }
             None => {
-                // IDF ngram that occurs for the 1st time
-                idf = n.log(2.0);
+                // IQF of a ngram that occurs for the 1st time
+                ngram_iqf = n.log(2.0);
             }
         }
         // normalization score
-        norm += trs[*ngram_idx] * idf;
+        norm += trs[*ngram_idx] * ngram_iqf;
     }
+
     Ok(ShardResults {
         results: sres,
-        norm: norm,
+        _norm: norm,
     })
 }
 
@@ -404,10 +410,12 @@ impl Qpick {
         ngrams_ids: FnvHashMap<String, Vec<usize>>,
         words: Vec<String>,
         wrs: Vec<f32>,
+        must_have: Vec<usize>,
         count: Option<usize>,
         with_tfidf: bool,
     ) -> Result<Vec<SearchResult>, Error> {
         let shard_ngrams = self.shard_ngrams(&ngrams);
+
         let shard_results: Vec<ShardResults> = shard_ngrams
             .iter()
             .map(|(shard_id, ngrams)| {
@@ -422,39 +430,42 @@ impl Qpick {
             })
             .collect();
 
-        let mut norm: f32 = 0.0;
+        // let mut norm: f32 = 0.0;
         // query_id -> (shard_query_id, shard_id)
         let mut ids_map: HashMap<u64, (u32, u8)> = HashMap::new();
 
         // query_id -> [ngram_rel_0, ngram_rel_1, ..., ngram_rel_n]
-        let vec_len = trs.len();
+        let vec_len = words.len();
         let mut res_data: FnvHashMap<u64, Vec<f32>> = FnvHashMap::default();
         for sh_res in shard_results.iter() {
             for r in sh_res.results.iter() {
-                let ref mut ngram_rel_vec =
+                let ref mut words_rel_vec =
                     *res_data.entry(r.query_id).or_insert(vec![0.0; vec_len]);
-                ngram_rel_vec[r.ngram_idx] = r.ngram_rel;
-                // for uni_idx in ngrams_ids.get(&r.ngram).unwrap_or(&vec![]) {
-                // if ngram_rel_vec[*uni_idx] == 0.0 {
-                // ngram_rel_vec[*uni_idx] = trs[*uni_idx];
-                // }
-                // }
+
+                for word_idx in ngrams_ids.get(&r.ngram).unwrap_or(&vec![]) {
+                    if words_rel_vec[*word_idx] == 0.0 {
+                        words_rel_vec[*word_idx] = wrs[*word_idx]
+                            * util::min(r.ngram_rel, r.query_ngram_rel)
+                            / r.query_ngram_rel;
+                    }
+                }
                 ids_map
                     .entry(r.query_id)
                     .or_insert((r.shard_query_id, r.shard_id));
             }
-            norm += sh_res.norm;
+            // norm += sh_res.norm;
         }
 
         let mut keyword_matches: Vec<KeywordMatchResult> = res_data
             .into_iter()
-            .map(|(query_id, ngram_rel_vec)| {
-                let similarity = ngram_rel_vec.iter().fold(0.0, |mut sum, &x| {
+            .filter(|(_, words_rel_vec)| must_have.is_empty() || words_rel_vec[must_have[0]] > 0.0)
+            .map(|(query_id, words_rel_vec)| {
+                let similarity = words_rel_vec.iter().fold(0.0, |mut sum, &x| {
                     sum += x;
                     sum
                 });
 
-                (query_id, util::max(1.0 - similarity / norm, 0.0))
+                (query_id, util::max(1.0 - similarity, 0.0))
             })
             .filter(|(_, dist)| *dist < DIST_THRESH)
             .map(|(query_id, dist)| KeywordMatchResult {
@@ -491,33 +502,41 @@ impl Qpick {
         }
 
         let mut dist_results: Vec<DistanceResult> = vec![];
-        let (ngrams, trs, _, words, wrs) =
+        let (ngrams, trs, ngrams_ids, words, wrs, _) =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
-        let mut dist_norm: f32 = 0.0;
-        let mut ngram_tr_idfs: HashMap<String, (f32, f32)> = HashMap::new();
-        self.shard_ngrams(&ngrams)
-            .into_iter()
-            .map(|(shard_id, ngrams)| {
-                for (ngram, (ngram_idx, idf)) in get_idfs(&ngrams, &self.shards[shard_id].map) {
-                    dist_norm += trs[ngram_idx] * idf;
-                    ngram_tr_idfs.insert(ngram, (trs[ngram_idx], idf));
-                }
-            })
-            .for_each(drop);
+        let ngrams_trs: FnvHashMap<String, f32> = ngrams
+            .iter()
+            .zip(trs.iter())
+            .map(|(n, r)| (n.to_string(), *r))
+            .collect::<FnvHashMap<String, f32>>();
 
         for cand_query in candidates.into_iter() {
-            let (cand_ngrams, ctrs, _, words, wrs) =
+            let (cand_ngrams, ctrs, _, _, _, _) =
                 ngrams::parse(&cand_query, &self.stopwords, &self.terms_relevance);
 
-            let mut dist_sim: f32 = 0.0;
+            // round to 2 decimals, so we get same distances here and in search results
+            let ctrs = ctrs.iter()
+                .map(|ctr| (*ctr * 100.0).round() / 100.0)
+                .collect::<Vec<f32>>();
+
+            let mut words_rel_vec = vec![0.0; words.len()];
             for (i, cngram) in cand_ngrams.iter().enumerate() {
-                if ngram_tr_idfs.contains_key(cngram) {
-                    let (tr, idf) = ngram_tr_idfs.get(cngram).unwrap();
-                    dist_sim += util::min((ctrs[i] * 100.0).round() / 100.0, *tr) * idf;
+                for word_idx in ngrams_ids.get(cngram).unwrap_or(&vec![]) {
+                    let ngram_tr = ngrams_trs.get(cngram).unwrap();
+                    if words_rel_vec[*word_idx] == 0.0 {
+                        words_rel_vec[*word_idx] =
+                            wrs[*word_idx] * util::min(ctrs[i], *ngram_tr) / *ngram_tr;
+                    }
                 }
             }
-            let dist = util::max(1.0 - dist_sim / dist_norm, 0.0);
+
+            let similarity = words_rel_vec.iter().fold(0.0, |mut sum, &x| {
+                sum += x;
+                sum
+            });
+            let dist = util::max(1.0 - similarity, 0.0);
+
             dist_results.push(DistanceResult {
                 query: cand_query.to_string(),
                 dist: dist,
@@ -532,7 +551,7 @@ impl Qpick {
             return vec![];
         }
 
-        let (ngrams, trs, ngrams_ids, words, wrs) =
+        let (ngrams, trs, ngrams_ids, words, wrs, must_have) =
             ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
 
         match self.get_matches(
@@ -541,6 +560,7 @@ impl Qpick {
             ngrams_ids,
             words,
             wrs,
+            must_have,
             Some(count as usize),
             with_tfidf,
         ) {

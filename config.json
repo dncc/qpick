@@ -1,7 +1,7 @@
 {
     "id_size": 6,
     "bucket_size": 2500,
-    "nr_shards": 32,
+    "nr_shards": 64,
     "shard_size": 250000000,
     "terms_relevance_file": "terms_relevance.fst",
     "stopwords_file": "stopwords.txt",
