@@ -62,8 +62,7 @@ use rayon::iter::ParallelIterator;
 
 pub const DIST_THRESH: f32 = 0.951; // take only queries with smaller distance [0, 1]
 
-make_static_var_and_getter!(get_nr_shards, NR_SHARDS, usize);
-make_static_var_and_getter!(get_shard_size, SHARD_SIZE, usize);
+make_static_var_and_getter!(_get_shard_size, SHARD_SIZE, usize);
 
 #[inline]
 fn read_bucket(mmap: &memmap::Mmap, addr: usize, len: usize, id_size: usize) -> Vec<(u32, u8, u8)> {
@@ -102,10 +101,47 @@ pub struct SearchShardResult {
     pub shard_query_id: u32, // query id unique on a shard level
     pub ngram_idx: usize,    // index of an i-th ngram in a query
     pub ngram_rel: f32, // relevance of an i-th ngram: [∑₁_ₙ (query_word_relₖ)] * IDFᵢ
+    pub weight_rel: f32, // weight coefficient for a word relevance, relative to the query
     pub query_ngram_rel: f32,
-    pub ngram_iqf: f32, // inverse query frequency
     pub ngram: String,
     pub query: Option<String>,
+}
+
+impl SearchShardResult {
+    #[inline]
+    pub fn new(
+        shard_id: u8,
+        shard_query_id: u32,
+        shard_num: usize,
+        ngram_rel: u8,
+        query_ngram_rel: f32,
+        ngram_idx: usize,
+        ngram: String,
+        query: Option<String>,
+        with_tfidf: bool,
+    ) -> Self {
+        let query_id = util::shard_id_2_query_id(shard_query_id as u64, shard_id, shard_num);
+        let ngram_rel = ngram_rel as f32 / 100.0;
+
+        let weight_rel: f32;
+        if with_tfidf {
+            weight_rel = util::min(ngram_rel, query_ngram_rel) / query_ngram_rel;
+        } else {
+            weight_rel = 1.0;
+        }
+
+        SearchShardResult {
+            query_id: query_id,
+            shard_id: shard_id,
+            shard_query_id: shard_query_id,
+            ngram_rel: ngram_rel,
+            weight_rel: weight_rel,
+            query_ngram_rel: query_ngram_rel,
+            ngram_idx: ngram_idx,
+            ngram: ngram,
+            query: query,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -117,7 +153,6 @@ pub struct SearchResult {
 
 struct ShardResults {
     results: Vec<SearchShardResult>,
-    _norm: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,7 +180,7 @@ impl PartialEq for KeywordMatchResult {
 #[inline]
 fn _get_idfs(ngrams: &Vec<(String, usize)>, map: &fst::Map) -> FnvHashMap<String, (usize, f32)> {
     let mut idfs: FnvHashMap<String, (usize, f32)> = FnvHashMap::default();
-    let n = *get_shard_size() as f32;
+    let n = *_get_shard_size() as f32;
     for (ngram, ngram_idx) in ngrams {
         // IDF score for the ngram
         let idf: f32;
@@ -173,55 +208,34 @@ fn get_shard_results(
     map: &fst::Map,
     ifd: &memmap::Mmap,
     id_size: usize,
+    shard_num: usize,
     with_tfidf: bool,
 ) -> Result<ShardResults, Error> {
-    let n = *get_shard_size() as f32;
-    let nr_shards = *get_nr_shards();
-
-    let mut norm: f32 = 0.0;
     let mut sres: Vec<SearchShardResult> = vec![];
     for (ngram, ngram_idx) in ngrams {
-        // IQF inverse query
-        let ngram_iqf: f32;
-        match get_addr_and_len(ngram, &map) {
+        if let Some((addr, len)) = get_addr_and_len(ngram, &map) {
             // returns physical memory address and length of the vector (not a number of bytes)
-            Some((addr, len)) => {
-                // IDF for existing ngram
-                ngram_iqf = (n / len as f32).log(2.0);
-                let mem_addr = addr as usize * id_size;
+            let mem_addr = addr as usize * id_size;
 
-                for &(shard_query_id, shard_id, ngram_rel) in
-                    read_bucket(ifd, mem_addr, len as usize, id_size).iter()
-                {
-                    let query_id =
-                        util::shard_id_2_query_id(shard_query_id as u64, shard_id, nr_shards);
-
-                    sres.push(SearchShardResult {
-                        query_id: query_id,
-                        shard_id: shard_id,
-                        shard_query_id: shard_query_id,
-                        ngram_rel: ngram_rel as f32 / 100.0,
-                        query_ngram_rel: trs[*ngram_idx],
-                        ngram_iqf: ngram_iqf,
-                        ngram_idx: *ngram_idx,
-                        ngram: ngram.to_string(),
-                        query: None,
-                    });
-                }
-            }
-            None => {
-                // IQF of a ngram that occurs for the 1st time
-                ngram_iqf = n.log(2.0);
+            for &(shard_query_id, shard_id, ngram_rel) in
+                read_bucket(ifd, mem_addr, len as usize, id_size).iter()
+            {
+                sres.push(SearchShardResult::new(
+                    shard_id,
+                    shard_query_id,
+                    shard_num,
+                    ngram_rel,
+                    trs[*ngram_idx],
+                    *ngram_idx,
+                    ngram.to_string(),
+                    None,
+                    with_tfidf,
+                ));
             }
         }
-        // normalization score
-        norm += trs[*ngram_idx] * ngram_iqf;
     }
 
-    Ok(ShardResults {
-        results: sres,
-        _norm: norm,
-    })
+    Ok(ShardResults { results: sres })
 }
 
 pub struct Qpick {
@@ -233,6 +247,7 @@ pub struct Qpick {
     shard_range: Range<u32>,
     id_size: usize,
     i2q_loaded: bool,
+    shard_num: usize,
 }
 
 pub struct Shard {
@@ -280,10 +295,10 @@ impl Qpick {
         let c = config::Config::init(path.clone());
         let id_size = c.id_size;
         unsafe {
-            NR_SHARDS = Some(c.nr_shards);
             SHARD_SIZE = Some(c.shard_size);
         }
 
+        let shard_num = c.nr_shards;
         let shard_range = shard_range_opt.unwrap_or(0..c.nr_shards as u32);
 
         let stopwords_path = &format!("{}/{}", path, c.stopwords_file);
@@ -371,6 +386,7 @@ impl Qpick {
             shard_range: shard_range,
             id_size: id_size,
             i2q_loaded: i2q_loaded,
+            shard_num: shard_num,
         }
     }
 
@@ -415,7 +431,6 @@ impl Qpick {
         with_tfidf: bool,
     ) -> Result<Vec<SearchResult>, Error> {
         let shard_ngrams = self.shard_ngrams(&ngrams);
-
         let shard_results: Vec<ShardResults> = shard_ngrams
             .iter()
             .map(|(shard_id, ngrams)| {
@@ -425,12 +440,12 @@ impl Qpick {
                     &self.shards[*shard_id].map,
                     &self.shards[*shard_id].shard,
                     self.id_size,
+                    self.shard_num,
                     with_tfidf,
                 ).unwrap()
             })
             .collect();
 
-        // let mut norm: f32 = 0.0;
         // query_id -> (shard_query_id, shard_id)
         let mut ids_map: HashMap<u64, (u32, u8)> = HashMap::new();
 
@@ -444,16 +459,13 @@ impl Qpick {
 
                 for word_idx in ngrams_ids.get(&r.ngram).unwrap_or(&vec![]) {
                     if words_rel_vec[*word_idx] == 0.0 {
-                        words_rel_vec[*word_idx] = wrs[*word_idx]
-                            * util::min(r.ngram_rel, r.query_ngram_rel)
-                            / r.query_ngram_rel;
+                        words_rel_vec[*word_idx] = wrs[*word_idx] * r.weight_rel;
                     }
                 }
                 ids_map
                     .entry(r.query_id)
                     .or_insert((r.shard_query_id, r.shard_id));
             }
-            // norm += sh_res.norm;
         }
 
         let mut keyword_matches: Vec<KeywordMatchResult> = res_data
