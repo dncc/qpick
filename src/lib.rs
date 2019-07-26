@@ -514,8 +514,12 @@ impl Qpick {
         }
 
         let mut dist_results: Vec<DistanceResult> = vec![];
-        let (ngrams, trs, ngrams_ids, words, wrs, _) =
-            ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
+        let (ngrams, trs, ngrams_ids, words, wrs, _) = ngrams::parse(
+            &query,
+            &self.stopwords,
+            &self.terms_relevance,
+            ngrams::ParseMode::Search,
+        );
 
         let ngrams_trs: FnvHashMap<String, f32> = ngrams
             .iter()
@@ -524,8 +528,12 @@ impl Qpick {
             .collect::<FnvHashMap<String, f32>>();
 
         for cand_query in candidates.into_iter() {
-            let (cand_ngrams, ctrs, _, _, _, _) =
-                ngrams::parse(&cand_query, &self.stopwords, &self.terms_relevance);
+            let (cand_ngrams, ctrs, _, _, _, _) = ngrams::parse(
+                &cand_query,
+                &self.stopwords,
+                &self.terms_relevance,
+                ngrams::ParseMode::Search,
+            );
 
             // round to 2 decimals, so we get same distances here and in search results
             let ctrs = ctrs.iter()
@@ -563,8 +571,12 @@ impl Qpick {
             return vec![];
         }
 
-        let (ngrams, trs, ngrams_ids, words, wrs, must_have) =
-            ngrams::parse(&query, &self.stopwords, &self.terms_relevance);
+        let (ngrams, trs, ngrams_ids, words, wrs, must_have) = ngrams::parse(
+            &query,
+            &self.stopwords,
+            &self.terms_relevance,
+            ngrams::ParseMode::Search,
+        );
 
         match self.get_matches(
             ngrams,
