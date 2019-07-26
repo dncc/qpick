@@ -8,22 +8,7 @@ use std::borrow::Cow;
 const MISS_WORD_REL: u64 = 6666;
 pub const WORDS_PER_QUERY: usize = 15;
 
-const PUNCT_SYMBOLS: &str = "[/@#!,'?:();.+]";
-
-macro_rules! update {
-    ($ngrams: ident,
-     $relevs: ident,
-     $ngrams_ids: ident,
-     $ngram: expr,
-     $relev: expr,
-     $indices: expr) => {
-        if !$ngrams_ids.contains_key(&$ngram) {
-            $relevs.push($relev);
-            $ngrams.push($ngram.clone());
-            $ngrams_ids.insert($ngram.clone(), $indices);
-        }
-    };
-}
+const PUNCT_SYMBOLS: &str = "[/@#!,'?:();.+-]";
 
 macro_rules! vec_push_str {
     // Base case:
@@ -48,6 +33,12 @@ macro_rules! bow2 {
 
         $v
     }};
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum ParseMode {
+    Index,
+    Search,
 }
 
 #[inline]
@@ -79,6 +70,30 @@ fn bow3(w1: &str, w2: &str, w3: &str) -> String {
 }
 
 #[inline]
+fn update(
+    ngrams: &mut Vec<String>,
+    relevs: &mut Vec<f32>,
+    ngrams_ids: &mut FnvHashMap<String, Vec<usize>>,
+    ngram: String,
+    relev: f32,
+    indices: Vec<usize>,
+    synonyms: &FnvHashMap<usize, String>,
+) {
+    if !ngrams_ids.contains_key(&ngram) {
+        if indices.len() == 1 && !synonyms.is_empty() {
+            if let Some(synonym) = synonyms.get(&indices[0]) {
+                relevs.push(relev);
+                ngrams.push(synonym.to_string());
+                ngrams_ids.insert(synonym.to_string(), indices.clone());
+            }
+        }
+        relevs.push(relev);
+        ngrams.push(ngram.clone());
+        ngrams_ids.insert(ngram.clone(), indices);
+    }
+}
+
+#[inline]
 fn u8_find_and_replace<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> {
     lazy_static! {
         static ref PUNCT_RE: Regex = Regex::new(PUNCT_SYMBOLS).unwrap();
@@ -93,7 +108,7 @@ fn u8_find_and_replace<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> {
         for c in rest {
             match c {
                 b'!' | b',' | b'?' | b':' => (),
-                b'#' | b'@' | b'(' | b')' | b';' | b'.' | b'/' | b'\'' | b'+' => {
+                b'#' | b'@' | b'(' | b')' | b';' | b'.' | b'/' | b'\'' | b'+' | b'-' => {
                     output.extend_from_slice(b" ")
                 }
                 _ => output.push(c),
@@ -141,15 +156,112 @@ pub fn normalize(query: &str) -> String {
 }
 
 #[inline]
-fn get_norm_query_vec(query: &str) -> Vec<String> {
+fn suffix_words(words: &mut Vec<String>, suffix_letters: &mut Vec<(usize, String)>) -> Vec<String> {
+    let mut word_idx = 0;
+    let mut suffixed_words: Vec<String> = vec![];
+
+    words.reverse();
+    suffix_letters.reverse();
+
+    while let Some(w) = words.pop() {
+        let mut sw = String::with_capacity(w.len() + suffix_letters.len());
+        sw.push_str(&w);
+        while let Some((i, suffix)) = suffix_letters.last() {
+            if *i != word_idx {
+                break;
+            } else {
+                sw.push_str(suffix);
+                suffix_letters.pop();
+            }
+        }
+        suffixed_words.push(sw);
+        word_idx += 1;
+    }
+
+    // if still relatively sparse, join into one word vec:
+    //  @xel en e x -> [xelenex] instead of [xel, enex]
+    //  @xe l en e x -> [xelenex] instead of [xel, enex]
+    if suffixed_words.len() > 1 && suffixed_words.iter().all(|w| w.len() <= 4) {
+        suffixed_words = vec![suffixed_words.join("")];
+    }
+
+    suffixed_words
+}
+
+#[inline]
+fn suffix_synonyms(
+    words: &Vec<String>,
+    suffix_letters: &mut Vec<(usize, String)>,
+) -> FnvHashMap<usize, String> {
+    let mut suffix_synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
+    for (word_idx, word) in words.iter().enumerate() {
+        let mut synonym = String::with_capacity(word.len() + suffix_letters.len());
+        synonym.push_str(word);
+        while let Some((i, suffix)) = suffix_letters.last() {
+            if *i != word_idx {
+                break;
+            } else {
+                synonym.push_str(suffix);
+                suffix_letters.pop();
+            }
+        }
+        if word.len() < synonym.len() {
+            suffix_synonyms.insert(word_idx, synonym);
+        }
+    }
+
+    suffix_synonyms
+}
+
+#[inline]
+fn get_norm_query_vec(query: &str, mode: ParseMode) -> (Vec<String>, FnvHashMap<usize, String>) {
+    let mut suffix_letters: Vec<(usize, String)> = Vec::with_capacity(WORDS_PER_QUERY - 1);
+    let mut synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
+
+    let mut words_cnt: usize = 0;
     let mut words = normalize(query)
         .split(" ")
-        .map(|w| w.trim().to_string())
-        .filter(|w| w.len() > 1 || !w.is_empty() && char::is_numeric(w.chars().next().unwrap()))
+        .enumerate()
+        .filter(|(i, word)| {
+            let word = word.trim();
+            if word.len() > 1 {
+                words_cnt += 1;
+                return true;
+            }
+
+            if let Some(c) = word.chars().next() {
+                if *i == 0 || c.is_digit(10) {
+                    words_cnt += 1;
+                    return true;
+                }
+
+                if !c.is_alphabetic() {
+                    return false;
+                }
+
+                suffix_letters.push((words_cnt - 1, word.to_string()));
+
+                return false;
+            }
+
+            return false;
+        })
+        .map(|(_, w)| w.to_string())
         .collect::<Vec<String>>();
     words.truncate(WORDS_PER_QUERY);
 
-    words
+    if words.is_empty() {
+        return (words, synonyms);
+    }
+
+    // join sparse words e.g.: '@x e l e n e x', '@xe l e n e x' etc.
+    if words.iter().all(|w| w.len() <= 4) {
+        words = suffix_words(&mut words, &mut suffix_letters);
+    } else if mode == ParseMode::Search {
+        synonyms = suffix_synonyms(&mut words, &mut suffix_letters);
+    }
+
+    (words, synonyms)
 }
 
 #[inline]
@@ -157,8 +269,9 @@ pub fn get_words_relevances(
     query: &str,
     tr_map: &fst::Map,
     stopwords: &FnvHashSet<String>,
+    mode: ParseMode,
 ) -> FnvHashMap<String, f32> {
-    let words = get_norm_query_vec(query);
+    let (words, _) = get_norm_query_vec(query, mode);
     let (_, _, relevs) = index_words(&words, tr_map, stopwords);
 
     words
@@ -242,6 +355,9 @@ pub fn get_stop_ngrams(
                 stop_ngrams.push((bow2(&words[*i], &words[j]), rels[*i] + rels[j], vec![*i, j]));
             } else {
                 linked_idx.insert(j + 1);
+                if stop_idx_set.contains(&(j + 1)) {
+                    skip_idx.insert(j + 1);
+                }
                 stop_ngrams.push((
                     bow3(&words[*i], &words[j], &words[j + 1]),
                     rels[*i] + rels[j] + rels[j + 1],
@@ -254,7 +370,7 @@ pub fn get_stop_ngrams(
             let j = *i - 1;
             let k = *i + 1;
 
-            // push all single-no-stop words, TODO macro!
+            // push all single-no-stop words
             if !word_idx.is_empty() {
                 let mut next_i = word_idx.pop().unwrap();
                 while next_i < j && !linked_idx.contains(&next_i) {
@@ -315,7 +431,9 @@ pub fn get_stop_ngrams(
 
             // neither j, nor k are stopwords
             } else {
-                if rels[j] <= rels[k] && !linked_idx.contains(&j) {
+                if (rels[j] <= rels[k] || words[j].len() >= 4 * words[k].len())
+                    && !linked_idx.contains(&j)
+                {
                     linked_idx.insert(*i);
                     linked_idx.insert(j);
                     stop_ngrams.push((
@@ -382,6 +500,7 @@ pub fn parse(
     query: &str,
     stopwords: &FnvHashSet<String>,
     tr_map: &fst::Map,
+    mode: ParseMode,
 ) -> (
     Vec<String>,
     Vec<f32>,
@@ -395,20 +514,21 @@ pub fn parse(
     let mut ngrams_ids: FnvHashMap<String, Vec<usize>> = FnvHashMap::default();
     let mut must_have: Vec<usize> = Vec::with_capacity(2);
 
-    let words = get_norm_query_vec(query);
+    let (words, synonyms) = get_norm_query_vec(query, mode);
     if words.is_empty() {
         return (ngrams, ngrams_relevs, ngrams_ids, words, vec![], vec![]);
     }
 
     let words_len = words.len();
     if words_len == 1 {
-        update!(
-            ngrams,
-            ngrams_relevs,
-            ngrams_ids,
+        update(
+            &mut ngrams,
+            &mut ngrams_relevs,
+            &mut ngrams_ids,
             words[0].clone(),
             1.0,
-            vec![0]
+            vec![0],
+            &synonyms,
         );
         return (ngrams, ngrams_relevs, ngrams_ids, words, vec![1.0], vec![0]);
     }
@@ -432,13 +552,14 @@ pub fn parse(
     let ngram_thresh = 1.8 / words_len as f32;
     for i in 0..stop_ngrams_len {
         if stop_ngrams[i].2.len() > 1 && stop_ngrams[i].1 > ngram_thresh {
-            update!(
-                ngrams,
-                ngrams_relevs,
-                ngrams_ids,
+            update(
+                &mut ngrams,
+                &mut ngrams_relevs,
+                &mut ngrams_ids,
                 stop_ngrams[i].0.clone(),
                 stop_ngrams[i].1,
-                stop_ngrams[i].2.clone()
+                stop_ngrams[i].2.clone(),
+                &synonyms,
             );
         }
 
@@ -452,104 +573,138 @@ pub fn parse(
                 }
                 let mut ngram_ids_vec = stop_ngrams[i].2.clone();
                 ngram_ids_vec.extend(stop_ngrams[j].2.clone());
-                update!(ngrams, ngrams_relevs, ngrams_ids, ngram, ntr, ngram_ids_vec);
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
+                    ngram,
+                    ntr,
+                    ngram_ids_vec,
+                    &synonyms,
+                );
             }
         }
     }
 
-    // if words_len == 2 {
-    // // insert 2nd most relevant word
-    // update!(
-    // ngrams,
-    // ngrams_relevs,
-    // ngrams_ids,
-    // words_vec[1].1.clone(),
-    // words_vec[1].2,
-    // vec![words_vec[1].0]
-    // );
-    // }
-
-    // top relevant and must have word(s)
+    // insert the most relevant word
     if words_len < 4 || words_vec[0].2 > 1.5 * words_vec[1].2 {
-        // insert the most relevant word
-        update!(
-            ngrams,
-            ngrams_relevs,
-            ngrams_ids,
+        update(
+            &mut ngrams,
+            &mut ngrams_relevs,
+            &mut ngrams_ids,
             words_vec[0].1.clone(),
             words_vec[0].2,
-            vec![words_vec[0].0]
+            vec![words_vec[0].0],
+            &synonyms,
         );
     }
 
     // identify must have word
-    if words_len < 5 || (words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh) {
-        for (word_idx, word, _) in words_vec.iter() {
-            // skip serial numbers, dates, 's01' 's02' type of words, TODO improve
-            if word.len() <= 8 && word.chars().any(char::is_numeric) {
-                continue;
+    if words_len < 5 || words_vec[0].2 > 1.8 * word_thresh
+        || (words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
+    {
+        if words_len > 1 && words_vec[0].2 > 0.6 {
+            // the top word is too important to miss
+            must_have.push(words_vec[0].0);
+        } else {
+            for (word_idx, word, word_rel) in words_vec.iter() {
+                // skip serial numbers, dates, 's01' 's02' type of words,
+                if word.len() <= 8 && word.chars().any(char::is_numeric) {
+                    continue;
+                }
+                must_have.push(*word_idx);
+                if words_len < 5 && mode == ParseMode::Search {
+                    update(
+                        &mut ngrams,
+                        &mut ngrams_relevs,
+                        &mut ngrams_ids,
+                        word.clone(),
+                        *word_rel,
+                        vec![*word_idx],
+                        &synonyms,
+                    );
+                }
+                break;
             }
-            must_have.push(*word_idx);
-            break;
         }
     }
 
     if words_len > 3 {
         // ngram with 3 most relevant words
-        update!(
-            ngrams,
-            ngrams_relevs,
-            ngrams_ids,
+        update(
+            &mut ngrams,
+            &mut ngrams_relevs,
+            &mut ngrams_ids,
             bow3(
                 &words_vec[0].1.clone(),
                 &words_vec[1].1.clone(),
-                &words_vec[2].1.clone()
+                &words_vec[2].1.clone(),
             ),
             words_vec[0].2 + words_vec[1].2 + words_vec[2].2,
-            vec![words_vec[0].0, words_vec[1].0, words_vec[2].0]
-        );
-
-        // ngram with 2 most relevant words
-        update!(
-            ngrams,
-            ngrams_relevs,
-            ngrams_ids,
-            bow2(&words_vec[0].1.clone(), &words_vec[1].1.clone()),
-            &words_vec[0].2 + &words_vec[1].2,
-            vec![words_vec[0].0, words_vec[1].0]
+            vec![words_vec[0].0, words_vec[1].0, words_vec[2].0],
+            &synonyms,
         );
 
         if let Some(last) = words_vec.pop() {
             // ngram with the most and the least relevant word
             // if any of the top 2 words is bellow the word_thresh
             if words_vec[0].2 <= word_thresh {
-                update!(
-                    ngrams,
-                    ngrams_relevs,
-                    ngrams_ids,
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
                     bow2(&words_vec[0].1.clone(), &last.1.clone()),
                     words_vec[0].2 + last.2,
-                    vec![words_vec[0].0, last.0]
+                    vec![words_vec[0].0, last.0],
+                    &synonyms,
                 );
             } else {
-                update!(
-                    ngrams,
-                    ngrams_relevs,
-                    ngrams_ids,
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
                     bow2(&words_vec[1].1, &last.1.clone()),
                     words_vec[1].2 + last.2,
-                    vec![words_vec[1].0, last.0]
+                    vec![words_vec[1].0, last.0],
+                    &synonyms,
                 );
-                update!(
-                    ngrams,
-                    ngrams_relevs,
-                    ngrams_ids,
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
                     bow2(&words_vec[1].1, &words_vec[2].1),
                     words_vec[1].2 + words_vec[2].2,
-                    vec![words_vec[1].0, words_vec[2].0]
+                    vec![words_vec[1].0, words_vec[2].0],
+                    &synonyms,
                 );
             }
         }
+    }
+
+    if words_len >= 3 {
+        // 2 most relevant words
+        update(
+            &mut ngrams,
+            &mut ngrams_relevs,
+            &mut ngrams_ids,
+            bow2(&words_vec[0].1.clone(), &words_vec[1].1.clone()),
+            &words_vec[0].2 + &words_vec[1].2,
+            vec![words_vec[0].0, words_vec[1].0],
+            &synonyms,
+        );
+    }
+
+    if words_len >= 4 {
+        // 1st and 3rd
+        update(
+            &mut ngrams,
+            &mut ngrams_relevs,
+            &mut ngrams_ids,
+            bow2(&words_vec[0].1.clone(), &words_vec[2].1.clone()),
+            &words_vec[0].2 + &words_vec[2].2,
+            vec![words_vec[0].0, words_vec[2].0],
+            &synonyms,
+        );
     }
 
     (
@@ -575,8 +730,8 @@ mod tests {
         let e = "here s  an   example";
         assert_eq!(normalize(q), e);
 
-        let q = "'Here's@#another one with some question?## and a comma, as well as (parenthesis)!";
-        let e = "here s  another one with some question   and a comma as well as  parenthesis";
+        let q = "'Here's@#another one with some question?## and a comma, and (parenthesis)!";
+        let e = "here s  another one with some question   and a comma and  parenthesis";
         assert_eq!(normalize(q), e);
 
         let q = "München Gödel Gießen Bären";
@@ -588,21 +743,64 @@ mod tests {
     fn test_get_norm_query_vec() {
         let q = "ruby date and time as string";
         let e = vec!["ruby", "date", "and", "time", "as", "string"];
-        assert_eq!(get_norm_query_vec(q), e);
+        let (words, _) = get_norm_query_vec(q, ParseMode::Search);
+        assert_eq!(words, e);
 
         let q = "sim karte defekt t mobile iphone";
-        let e = vec!["sim", "karte", "defekt", "mobile", "iphone"];
-        assert_eq!(get_norm_query_vec(q), e);
+        let e_words = vec!["sim", "karte", "defekt", "mobile", "iphone"];
+        // TODO fix defektt -> tmobile
+        let e_synonyms = vec![(2, "defektt")]
+            .into_iter()
+            .map(|(i, s)| (i, s.to_string()))
+            .collect::<FnvHashMap<usize, String>>();
+        let (words, synonyms) = get_norm_query_vec(q, ParseMode::Search);
+        assert_eq!(words, e_words);
+        assert_eq!(synonyms, e_synonyms);
+
+        let q = "sim karte defekt t mobile iphone";
+        let e_words = vec!["sim", "karte", "defekt", "mobile", "iphone"];
+        let e_suffix_letters: FnvHashMap<usize, String> = FnvHashMap::default();
+        let (words, suffix_letters) = get_norm_query_vec(q, ParseMode::Index);
+        assert_eq!(words, e_words);
+        assert_eq!(suffix_letters, e_suffix_letters);
+
+        let q = "caddy14 d ersatzteile";
+        let e_words = vec!["caddy14", "ersatzteile"];
+        let e_synonyms = vec![(0, "caddy14d")]
+            .into_iter()
+            .map(|(i, s)| (i, s.to_string()))
+            .collect::<FnvHashMap<usize, String>>();
+        let (words, synonyms) = get_norm_query_vec(q, ParseMode::Search);
+        assert_eq!(words, e_words);
+        assert_eq!(synonyms, e_synonyms);
+
+        let q = "caddy14 d ersatzteile";
+        let e_words = vec!["caddy14", "ersatzteile"];
+        let e_synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
+        let (words, synonyms) = get_norm_query_vec(q, ParseMode::Index);
+        assert_eq!(words, e_words);
+        assert_eq!(synonyms, e_synonyms);
 
         let q = "r sim 7 free mobile iphone 5";
-        let e = vec!["sim", "7", "free", "mobile", "iphone", "5"];
-        assert_eq!(get_norm_query_vec(q), e);
+        let e = vec!["r", "sim", "7", "free", "mobile", "iphone", "5"];
+        let (words, _) = get_norm_query_vec(q, ParseMode::Search);
+        assert_eq!(words, e);
     }
 
-    fn get_ngrams(query: &str, tr_map: &Map, stopwords: &FnvHashSet<String>) -> Vec<String> {
-        let words = get_norm_query_vec(query);
+    fn get_stop_ngrams_test(
+        query: &str,
+        tr_map: &Map,
+        stopwords: &FnvHashSet<String>,
+        mode: ParseMode,
+    ) -> Vec<String> {
+        let (words, _) = get_norm_query_vec(query, mode);
+
         if words.is_empty() {
             return vec![];
+        }
+
+        if words.len() == 1 {
+            return words;
         }
 
         let (mut word_idx, stop_idx, rels) = index_words(&words, tr_map, stopwords);
@@ -635,25 +833,31 @@ mod tests {
             Err(_) => panic!("Failed to load terms rel. map!"),
         };
 
+        let mode = ParseMode::Index;
+
+        let q = "ormlite callintransaction and h2";
+        let e = vec!["ormlite", "and callintransaction", "h2"];
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
+
         let q = "laravel has many order by";
         let e = vec!["laravel", "has many", "by order"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "order by has many laravel";
         let e = vec!["by order", "has many", "laravel"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "the paws of destiny amazon prime";
         let e = vec!["paws the", "destiny of", "amazon", "prime"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "the clash influences";
         let e = vec!["clash the", "influences"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "welche 30 unternehmen sind im dax";
         let e = vec!["30 welche", "sind unternehmen", "dax im"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "if the word is numeric it has to go into bigram";
         let e = vec![
@@ -663,53 +867,105 @@ mod tests {
             "go to",
             "bigram into",
         ];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "if the word is 7 it has to go into bigram";
         let e = vec!["if the word", "7 is", "has it", "go to", "bigram into"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "remove all of the spaces in JavaScript file";
         let e = vec!["all remove", "of spaces the", "in javascript", "file"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "allocating memory is not a big deal";
         let e = vec!["allocating", "is memory", "big not", "deal"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "aber keine";
         let e = vec!["aber keine"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         // w/o stopwords
         let q = "hengstenberg evangelische";
         let e = vec!["hengstenberg", "evangelische"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "changing mac os menu bar";
         let e = vec!["changing", "mac", "os", "menu", "bar"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "emacs bind buffer mode key";
         let e = vec!["emacs", "bind", "buffer", "mode", "key"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "sim karte defekt t mobile iphone";
         let e = vec!["sim", "karte", "defekt", "mobile", "iphone"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "disneyland paris ticket download";
         let e = vec!["disneyland", "paris", "ticket", "download"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "friends s01 e01 stream";
         let e = vec!["friends", "s01", "e01", "stream"];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
-        // TODO fix this, should be xselenax
+        let q = "caddy14 d ersatzteile";
+        let e = vec!["caddy14", "ersatzteile"];
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
+
+        let q = "who was the first to invent bicycle";
+        let e = vec!["the was who", "first to", "invent", "bicycle"];
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
+            e
+        );
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
+            e
+        );
+
         let q = "@x s e l e n a x";
-        let e: Vec<String> = vec![];
-        assert_eq!(get_ngrams(q, &tr_map, &stopwords), e);
+        let e = vec!["xselenax"];
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
+            e
+        );
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
+            e
+        );
+
+        let q = "@xsel e n a x";
+        let e = vec!["xselenax"];
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
+            e
+        );
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
+            e
+        );
+    }
+
+    fn assert_must_have_words_ngrams_ids(
+        query: &str,
+        stopwords: &FnvHashSet<String>,
+        tr_map: &fst::Map,
+        mode: ParseMode,
+        e_must_have: Vec<usize>,
+        e_words: Vec<&str>,
+        e_ngrams_ids: Vec<(&str, Vec<usize>)>,
+    ) {
+        let (_, _, ngrams_ids, words, _, must_have) = parse(query, &stopwords, &tr_map, mode);
+        let e_ngrams_ids = e_ngrams_ids
+            .into_iter()
+            .map(|(s, v)| (s.to_string(), v))
+            .collect::<FnvHashMap<String, Vec<usize>>>();
+
+        assert_eq!(ngrams_ids, e_ngrams_ids);
+        assert_eq!(words, e_words);
+        assert_eq!(must_have, e_must_have, "query: {}", query);
     }
 
     #[test]
@@ -734,298 +990,465 @@ mod tests {
         };
 
         let q = "list of literature genres txt";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![2];
-        let e_words = vec!["list", "of", "literature", "genres", "txt"];
-        let e_ngrams_ids = vec![
-            ("genres txt list of", vec![0, 1, 3, 4]),
-            ("genres list literature", vec![2, 3, 0]),
-            ("genres of", vec![3, 1]),
-            ("genres txt literature", vec![2, 3, 4]),
-            ("genres list", vec![3, 0]),
-            ("genres txt", vec![3, 4]),
-            ("genres literature", vec![2, 3]),
-            ("list of literature", vec![0, 1, 2]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![2],
+            vec!["list", "of", "literature", "genres", "txt"],
+            vec![
+                ("genres list literature", vec![2, 3, 0]),
+                ("genres of", vec![3, 1]),
+                ("genres list", vec![3, 0]),
+                ("genres txt", vec![3, 4]),
+                ("genres literature", vec![2, 3]),
+                ("list literature", vec![2, 0]),
+                ("genres txt literature", vec![2, 3, 4]),
+                ("list of literature", vec![0, 1, 2]),
+                ("genres txt list of", vec![0, 1, 3, 4]),
+            ],
+        );
 
         let q = "friends s01 e01 stream";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![0];
-        let e_words = vec!["friends", "s01", "e01", "stream"];
-        let e_ngrams_ids = vec![
-            ("s01 stream", vec![1, 3]),
-            ("friends s01", vec![0, 1]),
-            ("e01 s01", vec![1, 2]),
-            ("friends stream", vec![0, 3]),
-            ("e01 friends", vec![0, 2]),
-            ("e01 stream", vec![2, 3]),
-            ("e01 friends s01", vec![2, 1, 0]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![0],
+            vec!["friends", "s01", "e01", "stream"],
+            vec![
+                ("s01 stream", vec![1, 3]),
+                ("friends s01", vec![0, 1]),
+                ("e01 s01", vec![1, 2]),
+                ("friends stream", vec![0, 3]),
+                ("e01 friends", vec![0, 2]),
+                ("e01 stream", vec![2, 3]),
+                ("e01 friends s01", vec![2, 1, 0]),
+            ],
+        );
 
         let q = "emacs bind buffer mode key";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![0];
-        let e_words = vec!["emacs", "bind", "buffer", "mode", "key"];
-        let e_ngrams_ids = vec![
-            ("emacs key", vec![0, 4]),
-            ("buffer emacs", vec![0, 2]),
-            ("bind emacs", vec![0, 1]),
-            ("bind buffer", vec![1, 2]),
-            ("emacs mode", vec![0, 3]),
-            ("buffer mode", vec![2, 3]),
-            ("buffer key", vec![2, 4]),
-            ("key mode", vec![3, 4]),
-            ("bind buffer emacs", vec![0, 2, 1]),
-            ("bind mode", vec![1, 3]),
-            ("bind key", vec![1, 4]),
-            ("emacs", vec![0]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![0],
+            vec!["emacs", "bind", "buffer", "mode", "key"],
+            vec![
+                ("emacs key", vec![0, 4]),
+                ("buffer emacs", vec![0, 2]),
+                ("bind emacs", vec![0, 1]),
+                ("bind buffer", vec![1, 2]),
+                ("emacs mode", vec![0, 3]),
+                ("buffer mode", vec![2, 3]),
+                ("buffer key", vec![2, 4]),
+                ("key mode", vec![3, 4]),
+                ("bind buffer emacs", vec![0, 2, 1]),
+                ("bind mode", vec![1, 3]),
+                ("bind key", vec![1, 4]),
+                ("emacs", vec![0]),
+            ],
+        );
 
         let q = "disneyland paris ticket download";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have = vec![0];
-        let e_words = vec!["disneyland", "paris", "ticket", "download"];
-        let e_ngrams_ids = vec![
-            ("disneyland paris", vec![0, 1]),
-            ("paris ticket", vec![1, 2]),
-            ("download ticket", vec![2, 3]),
-            ("disneyland download", vec![0, 3]),
-            ("disneyland", vec![0]),
-            ("disneyland paris ticket", vec![0, 1, 2]),
-            ("disneyland ticket", vec![0, 2]),
-            ("download paris", vec![1, 3]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![0],
+            vec!["disneyland", "paris", "ticket", "download"],
+            vec![
+                ("disneyland paris", vec![0, 1]),
+                ("paris ticket", vec![1, 2]),
+                ("download ticket", vec![2, 3]),
+                ("disneyland download", vec![0, 3]),
+                ("disneyland", vec![0]),
+                ("disneyland paris ticket", vec![0, 1, 2]),
+                ("disneyland ticket", vec![0, 2]),
+                ("download paris", vec![1, 3]),
+            ],
+        );
 
         let q = "cisco 4500e power supply configuration manager";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have = vec![0];
-        let e_words = vec![
-            "cisco",
-            "4500e",
-            "power",
-            "supply",
-            "configuration",
-            "manager",
-        ];
-        let e_ngrams_ids = vec![
-            ("configuration manager power", vec![2, 4, 5]),
-            ("4500e supply", vec![1, 3]),
-            ("cisco power", vec![0, 2]),
-            ("4500e configuration manager", vec![1, 4, 5]),
-            ("cisco supply", vec![0, 3]),
-            ("power supply", vec![2, 3]),
-            ("4500e cisco supply", vec![0, 1, 3]),
-            ("4500e configuration", vec![1, 4]),
-            ("4500e cisco", vec![0, 1]),
-            ("4500e power", vec![1, 2]),
-            ("cisco configuration manager", vec![0, 4, 5]),
-            ("configuration manager supply", vec![3, 4, 5]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![0],
+            vec![
+                "cisco",
+                "4500e",
+                "power",
+                "supply",
+                "configuration",
+                "manager",
+            ],
+            vec![
+                ("power supply", vec![2, 3]),
+                ("configuration manager power", vec![2, 4, 5]),
+                ("4500e configuration manager", vec![1, 4, 5]),
+                ("configuration manager supply", vec![3, 4, 5]),
+                ("cisco configuration manager", vec![0, 4, 5]),
+                ("4500e supply", vec![1, 3]),
+                ("cisco power", vec![0, 2]),
+                ("cisco supply", vec![0, 3]),
+                ("4500e cisco supply", vec![0, 1, 3]),
+                ("4500e configuration", vec![1, 4]),
+                ("4500e cisco", vec![0, 1]),
+                ("4500e power", vec![1, 2]),
+            ],
+        );
 
         let q = "tuhh thesis scholarship";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have = vec![0];
-        let e_words = vec!["tuhh", "thesis", "scholarship"];
-        let e_ngrams_ids = vec![
-            ("thesis tuhh", vec![0, 1]),
-            ("scholarship thesis", vec![1, 2]),
-            ("scholarship tuhh", vec![0, 2]),
-            ("tuhh", vec![0]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![0],
+            vec!["tuhh", "thesis", "scholarship"],
+            vec![
+                ("thesis tuhh", vec![0, 1]),
+                ("scholarship thesis", vec![1, 2]),
+                ("scholarship tuhh", vec![0, 2]),
+                ("tuhh", vec![0]),
+            ],
+        );
 
         let q = "welche 30 unternehmen sind im dax";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have = vec![5];
-        let e_words = vec!["welche", "30", "unternehmen", "sind", "im", "dax"];
-        let e_ngrams_ids = vec![
-            ("dax im sind unternehmen", vec![2, 3, 4, 5]),
-            ("unternehmen welche", vec![2, 0]),
-            ("dax im", vec![4, 5]),
-            ("dax unternehmen", vec![5, 2]),
-            ("30 welche sind unternehmen", vec![0, 1, 2, 3]),
-            ("30 unternehmen", vec![2, 1]),
-            ("30 dax unternehmen", vec![5, 2, 1]),
-            ("30 welche dax im", vec![0, 1, 4, 5]),
-            ("dax", vec![5]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![5],
+            vec!["welche", "30", "unternehmen", "sind", "im", "dax"],
+            vec![
+                ("dax im sind unternehmen", vec![2, 3, 4, 5]),
+                ("unternehmen welche", vec![2, 0]),
+                ("dax im", vec![4, 5]),
+                ("dax unternehmen", vec![5, 2]),
+                ("30 welche sind unternehmen", vec![0, 1, 2, 3]),
+                ("30 unternehmen", vec![2, 1]),
+                ("30 dax unternehmen", vec![5, 2, 1]),
+                ("30 welche dax im", vec![0, 1, 4, 5]),
+                ("dax", vec![5]),
+                ("30 dax", vec![5, 1]),
+            ],
+        );
 
         let q = "nidda in alter zeit";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have = vec![0];
-        let e_words = vec!["nidda", "in", "alter", "zeit"];
-        let e_ngrams_ids = vec![
-            ("alter zeit", vec![3, 2]),
-            ("nidda zeit", vec![0, 3]),
-            ("alter in zeit", vec![1, 2, 3]),
-            ("alter in nidda", vec![0, 1, 2]),
-            ("nidda", vec![0]),
-            ("alter nidda zeit", vec![0, 3, 2]),
-            ("in zeit", vec![3, 1]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![0],
+            vec!["nidda", "in", "alter", "zeit"],
+            vec![
+                ("alter zeit", vec![3, 2]),
+                ("in zeit", vec![3, 1]),
+                ("alter nidda", vec![0, 2]),
+                ("nidda zeit", vec![0, 3]),
+                ("alter in nidda", vec![0, 1, 2]),
+                ("nidda", vec![0]),
+                ("alter nidda zeit", vec![0, 3, 2]),
+                ("alter in zeit", vec![1, 2, 3]),
+            ],
+        );
 
         let q = "fsck inode has imagic flag set";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![];
-        let e_words = vec!["fsck", "inode", "has", "imagic", "flag", "set"];
-        let e_ngrams_ids = vec![
-            ("flag imagic", vec![3, 4]),
-            ("flag fsck", vec![0, 4]),
-            ("fsck inode", vec![1, 0]),
-            ("flag set", vec![4, 5]),
-            ("imagic inode", vec![3, 1]),
-            ("fsck imagic inode", vec![3, 1, 0]),
-            ("has inode imagic", vec![1, 2, 3]),
-            ("fsck has inode", vec![0, 1, 2]),
-            ("flag has inode", vec![1, 2, 4]),
-            ("has inode set", vec![1, 2, 5]),
-            ("has inode", vec![1, 2]),
-            ("imagic set", vec![3, 5]),
-            ("fsck imagic", vec![0, 3]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![],
+            vec!["fsck", "inode", "has", "imagic", "flag", "set"],
+            vec![
+                ("flag has inode", vec![1, 2, 4]),
+                ("has inode imagic", vec![1, 2, 3]),
+                ("has inode set", vec![1, 2, 5]),
+                ("flag imagic", vec![3, 4]),
+                ("imagic set", vec![3, 5]),
+                ("fsck has inode", vec![0, 1, 2]),
+                ("fsck imagic inode", vec![3, 1, 0]),
+                ("flag fsck", vec![0, 4]),
+                ("fsck inode", vec![1, 0]),
+                ("flag set", vec![4, 5]),
+                ("imagic inode", vec![3, 1]),
+                ("has inode", vec![1, 2]),
+                ("fsck imagic", vec![0, 3]),
+            ],
+        );
 
         let q = "python programming to iota";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![3];
-        let e_words = vec!["python", "programming", "to", "iota"];
-        let e_ngrams_ids = vec![
-            ("programming to python", vec![0, 1, 2]),
-            ("iota programming to", vec![1, 2, 3]),
-            ("iota programming python", vec![3, 0, 1]),
-            ("python to", vec![0, 2]),
-            ("programming python", vec![0, 1]),
-            ("iota python", vec![0, 3]),
-            ("iota", vec![3]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![3],
+            vec!["python", "programming", "to", "iota"],
+            vec![
+                ("programming to python", vec![0, 1, 2]),
+                ("iota programming to", vec![1, 2, 3]),
+                ("iota programming", vec![3, 1]),
+                ("iota programming python", vec![3, 0, 1]),
+                ("python to", vec![0, 2]),
+                ("programming python", vec![0, 1]),
+                ("iota python", vec![0, 3]),
+                ("iota", vec![3]),
+            ],
+        );
 
         let q = "dinkel vollkorn toasties rezept";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![2];
-        let e_words = vec!["dinkel", "vollkorn", "toasties", "rezept"];
-        let e_ngrams_ids = vec![
-            ("toasties vollkorn", vec![1, 2]),
-            ("rezept toasties", vec![2, 3]),
-            ("rezept vollkorn", vec![1, 3]),
-            ("dinkel toasties vollkorn", vec![2, 0, 1]),
-            ("dinkel rezept", vec![0, 3]),
-            ("dinkel vollkorn", vec![0, 1]),
-            ("dinkel toasties", vec![0, 2]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![2],
+            vec!["dinkel", "vollkorn", "toasties", "rezept"],
+            vec![
+                ("toasties vollkorn", vec![1, 2]),
+                ("rezept toasties", vec![2, 3]),
+                ("rezept vollkorn", vec![1, 3]),
+                ("dinkel toasties vollkorn", vec![2, 0, 1]),
+                ("dinkel rezept", vec![0, 3]),
+                ("dinkel vollkorn", vec![0, 1]),
+                ("dinkel toasties", vec![0, 2]),
+            ],
+        );
 
         let q = "laravel has many order by";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![0];
-        let e_words = vec!["laravel", "has", "many", "order", "by"];
-        let e_ngrams_ids = vec![
-            ("by order laravel", vec![0, 3, 4]),
-            ("laravel order", vec![0, 3]),
-            ("has many laravel", vec![0, 1, 2]),
-            ("many order", vec![3, 2]),
-            ("laravel many order", vec![0, 3, 2]),
-            ("laravel", vec![0]),
-            ("has order", vec![3, 1]),
-            ("by order has many", vec![1, 2, 3, 4]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![0],
+            vec!["laravel", "has", "many", "order", "by"],
+            // fix form 'has many' instead of 'has laravel'
+            vec![
+                ("by order has many", vec![1, 2, 3, 4]),
+                ("has many laravel", vec![0, 1, 2]),
+                ("by order laravel", vec![0, 3, 4]),
+                ("laravel order", vec![0, 3]),
+                ("many order", vec![3, 2]),
+                ("laravel many order", vec![0, 3, 2]),
+                ("laravel many", vec![0, 2]),
+                ("laravel", vec![0]),
+                ("has order", vec![3, 1]),
+            ],
+        );
 
         let q = "samsung tv skype 2017";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![2];
-        let e_words = vec!["samsung", "tv", "skype", "2017"];
-        let e_ngrams_ids = vec![
-            ("samsung tv", vec![0, 1]),
-            ("2017 samsung", vec![0, 3]),
-            ("2017 tv", vec![1, 3]),
-            ("2017 skype", vec![2, 3]),
-            ("samsung skype tv", vec![2, 0, 1]),
-            ("samsung skype", vec![0, 2]),
-            ("skype tv", vec![1, 2]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![2],
+            vec!["samsung", "tv", "skype", "2017"],
+            vec![
+                ("samsung tv", vec![0, 1]),
+                ("2017 samsung", vec![0, 3]),
+                ("2017 tv", vec![1, 3]),
+                ("2017 skype", vec![2, 3]),
+                ("samsung skype tv", vec![2, 0, 1]),
+                ("samsung skype", vec![0, 2]),
+                ("skype tv", vec![1, 2]),
+            ],
+        );
 
         let q = "positionierte stl datei exportieren catia";
-        let (_, _, ngrams_ids, words, _, must_have) = parse(q, &stopwords, &tr_map);
-        let e_must_have: Vec<usize> = vec![4];
-        let e_words = vec!["positionierte", "stl", "datei", "exportieren", "catia"];
-        let e_ngrams_ids = vec![
-            ("positionierte stl", vec![0, 1]),
-            ("catia positionierte", vec![0, 4]),
-            ("exportieren stl", vec![1, 3]),
-            ("datei exportieren", vec![2, 3]),
-            ("catia exportieren", vec![3, 4]),
-            ("datei stl", vec![1, 2]),
-            ("datei positionierte", vec![0, 2]),
-            ("catia positionierte stl", vec![4, 0, 1]),
-            ("exportieren positionierte", vec![0, 3]),
-            ("catia stl", vec![1, 4]),
-            ("catia datei", vec![2, 4]),
-        ].into_iter()
-            .map(|(s, v)| (s.to_string(), v))
-            .collect::<FnvHashMap<String, Vec<usize>>>();
-        assert_eq!(ngrams_ids, e_ngrams_ids);
-        assert_eq!(words, e_words);
-        assert_eq!(must_have, e_must_have, "query: {}", q);
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![4],
+            vec!["positionierte", "stl", "datei", "exportieren", "catia"],
+            vec![
+                ("positionierte stl", vec![0, 1]),
+                ("catia positionierte", vec![0, 4]),
+                ("exportieren stl", vec![1, 3]),
+                ("datei exportieren", vec![2, 3]),
+                ("catia exportieren", vec![3, 4]),
+                ("datei stl", vec![1, 2]),
+                ("datei positionierte", vec![0, 2]),
+                ("catia positionierte stl", vec![4, 0, 1]),
+                ("exportieren positionierte", vec![0, 3]),
+                ("catia stl", vec![1, 4]),
+                ("catia datei", vec![2, 4]),
+            ],
+        );
+
+        let q = "caddy14 d ersatzteile";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+            vec![0],
+            vec!["caddy14", "ersatzteile"],
+            vec![("caddy14", vec![0]), ("caddy14 ersatzteile", vec![0, 1])],
+        );
+
+        // search mode!
+        let q = "caddy14 d ersatzteile";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![0],
+            vec!["caddy14", "ersatzteile"],
+            // TODO fix: should have also ("caddy14d erzatzteile", vec![0, 1]),
+            vec![
+                ("caddy14d", vec![0]),
+                ("caddy14", vec![0]),
+                ("caddy14 ersatzteile", vec![0, 1]),
+            ],
+        );
+
+        let q = "friends s01 e01 stream";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![0],
+            vec!["friends", "s01", "e01", "stream"],
+            vec![
+                ("s01 stream", vec![1, 3]),
+                ("friends", vec![0]),
+                ("friends s01", vec![0, 1]),
+                ("e01 s01", vec![1, 2]),
+                ("friends stream", vec![0, 3]),
+                ("e01 friends", vec![0, 2]),
+                ("e01 stream", vec![2, 3]),
+                ("e01 friends s01", vec![2, 1, 0]),
+            ],
+        );
+
+        let q = "calypso k5177"; // fix k5177==k5117, calypso is not included in ngrams,
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![0],
+            vec!["calypso", "k5177"],
+            vec![
+                ("calypso k5177", vec![0, 1]),
+                ("calypso", vec![0]),
+                ("k5177", vec![1]),
+            ],
+        );
+
+        let q = "kenzan flowers size";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![0],
+            vec!["kenzan", "flowers", "size"],
+            vec![
+                ("kenzan size", vec![0, 2]),
+                ("flowers size", vec![1, 2]),
+                ("kenzan", vec![0]),
+                ("flowers kenzan", vec![0, 1]),
+            ],
+        );
+        // assert equal outcomes for different parsing modes
+        let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
+            parse(q, &stopwords, &tr_map, ParseMode::Index);
+        let (_, _, i_ngrams_ids, i_words, _, i_must_have) =
+            parse(q, &stopwords, &tr_map, ParseMode::Search);
+        assert_eq!(s_ngrams_ids, i_ngrams_ids);
+        assert_eq!(s_words, i_words);
+        assert_eq!(s_must_have, i_must_have, "query: {}", q);
+
+        let q = "what size kenzan";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![2],
+            vec!["what", "size", "kenzan"],
+            vec![
+                ("kenzan size what", vec![0, 1, 2]),
+                ("kenzan size", vec![2, 1]),
+                ("kenzan", vec![2]),
+            ],
+        );
+        // assert equal outcomes for different parsing modes
+        let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
+            parse(q, &stopwords, &tr_map, ParseMode::Index);
+        let (_, _, i_ngrams_ids, i_words, _, i_must_have) =
+            parse(q, &stopwords, &tr_map, ParseMode::Search);
+        assert_eq!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
+        assert_eq!(s_words, i_words);
+        assert_eq!(s_must_have, i_must_have, "query: {}", q);
+
+        let q = "ormlite callintransaction and h2";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![0],
+            vec!["ormlite", "callintransaction", "and", "h2"],
+            vec![
+                ("and callintransaction h2", vec![1, 2, 3]),
+                ("and callintransaction ormlite", vec![0, 1, 2]),
+                ("ormlite", vec![0]),
+                ("callintransaction h2", vec![1, 3]),
+                ("callintransaction ormlite", vec![0, 1]),
+                ("and callintransaction", vec![1, 2]),
+                ("h2 ormlite", vec![0, 3]),
+                ("callintransaction h2 ormlite", vec![0, 1, 3]),
+            ],
+        );
+        // assert equal outcomes for different parsing modes [ormlite missing on indexing part]
+        let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
+            parse(q, &stopwords, &tr_map, ParseMode::Search);
+        let (_, _, mut i_ngrams_ids, i_words, _, i_must_have) =
+            parse(q, &stopwords, &tr_map, ParseMode::Index);
+        i_ngrams_ids.insert("ormlite".to_string(), vec![0]);
+        assert_eq!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
+        assert_eq!(s_words, i_words);
+        assert_eq!(s_must_have, i_must_have, "query: {}", q);
+
+        let q = "who was the first to invent bicycle";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![6],
+            vec!["who", "was", "the", "first", "to", "invent", "bicycle"],
+            vec![
+                ("first invent", vec![5, 3]),
+                ("bicycle first invent", vec![6, 5, 3]),
+                ("first to invent", vec![3, 4, 5]),
+                ("bicycle first to", vec![3, 4, 6]),
+                ("invent to", vec![5, 4]),
+                ("invent the was who", vec![0, 1, 2, 5]),
+                ("first to the was who", vec![0, 1, 2, 3, 4]),
+                ("bicycle first", vec![6, 3]),
+                ("bicycle the was who", vec![0, 1, 2, 6]),
+                ("bicycle invent", vec![5, 6]),
+            ],
+        );
     }
 }
