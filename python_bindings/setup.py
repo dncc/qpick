@@ -5,7 +5,7 @@ from rust_setuptools import (build_rust_cmdclass, build_install_lib_cmdclass,
 
 setup(
     name='rust-qpick',
-    version='0.0.6',
+    version='0.0.7',
     author='Dragan Cvetinovic',
     author_email='dcvetinovic@gmail.com',
     description=('Python bindings for the rust `qpick` crate - Query Pickaxe'),
