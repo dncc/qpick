@@ -620,7 +620,7 @@ pub fn parse(
         if words_len > 1 && words_vec[0].2 > 0.6 {
             // the top word is too important to miss
             must_have.push(words_vec[0].0);
-        } else if words_len > 2 && words_vec[1].2 < 0.95 * words_vec[0].2 {
+        } else if words_len >= 2 && words_vec[1].2 < 0.83 * words_vec[0].2 {
             for (word_idx, word, word_rel) in words_vec.iter() {
                 // skip serial numbers, dates, 's01' 's02' type of words,
                 if word.chars().any(char::is_numeric) {

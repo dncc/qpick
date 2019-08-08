@@ -5,5 +5,7 @@
     "shard_size": 250000000,
     "terms_relevance_file": "terms_relevance.fst",
     "stopwords_file": "stopwords.txt",
+    "words_file": "/home/dnc/workspace/cliqz/qpick/.data/words.txt",
+    "word_vecs_file": "/home/dnc/workspace/cliqz/qpick/.data/word_embeddings.bin",
     "i2q_file": "i2q"
 }

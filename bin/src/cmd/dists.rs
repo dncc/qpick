@@ -49,13 +49,17 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         qpick = qpick::Qpick::from_path("./index".to_string());
     }
 
-    let candidates: Vec<String> = args.arg_candidates
+    let candidates: Vec<String> = args
+        .arg_candidates
         .split(",")
         .map(|x| x.trim().to_string())
         .collect::<Vec<String>>();
 
     let r = qpick.get_distances(&args.arg_query, &candidates);
-    let v: Vec<(String, f32)> = r.into_iter().map(|dr| (dr.query, dr.dist)).collect();
+    let v: Vec<(String, Option<f32>, f32)> = r
+        .into_iter()
+        .map(|r| (r.query, r.dist.cosine, r.dist.keyword))
+        .collect();
     println!("{:?}", v);
 
     Ok(())

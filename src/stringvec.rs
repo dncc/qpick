@@ -47,6 +47,7 @@
 use std::fs::{read_dir, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter, Error, SeekFrom};
+use std::mem::MaybeUninit;
 
 use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
 use memmap::Mmap;
@@ -73,7 +74,7 @@ pub struct Offset(pub [u8; BYTES_PER_OFFSET]);
 
 impl From<usize> for Offset {
     fn from(integer: usize) -> Self {
-        let mut data: [u8; BYTES_PER_OFFSET] = unsafe { ::std::mem::uninitialized() };
+        let mut data: [u8; BYTES_PER_OFFSET] = unsafe { MaybeUninit::uninit().assume_init() };
         LittleEndian::write_uint(&mut data, integer as u64, BYTES_PER_OFFSET);
         Offset(data)
     }

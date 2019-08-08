@@ -52,7 +52,8 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
 
     let r = qpick.get(&args.arg_query, args.arg_count, !args.flag_without_tfidf);
 
-    let v: Vec<(u64, f32, String)> = r.iter()
+    let v: Vec<(u64, Option<f32>, f32, String)> = r
+        .iter()
         .map(|r| {
             let q = if let Some(ref query) = r.query {
                 query
@@ -60,7 +61,7 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
                 ""
             };
 
-            (r.query_id, r.dist, q.to_string())
+            (r.query_id, r.dist.cosine, r.dist.keyword, q.to_string())
         })
         .collect();
 

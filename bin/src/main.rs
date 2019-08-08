@@ -9,14 +9,14 @@ extern crate serde_derive;
 
 use std::env;
 use std::error;
-use std::process;
 use std::io::{self, Write};
+use std::process;
 
 use docopt::Docopt;
 
 mod cmd;
 
-pub type Error = Box<error::Error + Send + Sync>;
+pub type Error = Box<dyn error::Error + Send + Sync>;
 
 const USAGE: &'static str = "
 Usage:

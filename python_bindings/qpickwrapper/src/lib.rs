@@ -76,10 +76,10 @@ pub extern "C" fn string_vec_push(ptr: *mut Vec<String>, query: *mut libc::c_cha
 // --- string vector end
 
 // --- shard, index and i2q
-use qpick::Qpick;
-use qpick::shard;
 use qpick::builder;
+use qpick::shard;
 use qpick::stringvec;
+use qpick::Qpick;
 
 // index and shard bindings
 #[no_mangle]
@@ -139,7 +139,7 @@ pub extern "C" fn qpick_compile_i2q(file_path: *mut libc::c_char, output_dir: *m
 // `#[no_mangle]` warns for lifetime parameters,
 // a known issue: https://github.com/rust-lang/rust/issues/40342
 #[no_mangle]
-pub extern "C" fn qpick_init(path: *mut libc::c_char) -> *mut Qpick {
+pub extern "C" fn qpick_init(path: *mut libc::c_char) -> *mut Qpick<'static> {
     let path = cstr_to_str(path);
     let qpick = Qpick::from_path(path.to_string());
     to_raw_ptr(qpick)
@@ -150,7 +150,7 @@ pub extern "C" fn qpick_init_with_shard_range(
     path: *mut libc::c_char,
     start_shard: libc::uint32_t,
     end_shard: libc::uint32_t,
-) -> *mut Qpick {
+) -> *mut Qpick<'static> {
     let path = cstr_to_str(path);
     let qpick = Qpick::from_path_with_shard_range(path.to_string(), start_shard..end_shard);
     to_raw_ptr(qpick)
@@ -163,6 +163,13 @@ pub extern "C" fn string_free(s: *mut libc::c_char) {
 }
 
 // ------ search iterator ---
+#[repr(C)]
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct QpickDistance {
+    keyword: libc::c_float,
+    cosine: libc::c_float,
+}
 
 #[repr(C)]
 #[derive(Debug)]
@@ -170,7 +177,7 @@ pub extern "C" fn string_free(s: *mut libc::c_char) {
 pub struct QpickSearchItem {
     query_id: libc::uint64_t,
     query: *mut libc::c_char,
-    dist: libc::c_float, //f32
+    dist: *mut QpickDistance,
 }
 
 // Declare a function that returns the next item from a qpick vector
@@ -181,7 +188,10 @@ pub extern "C" fn qpick_search_iter_next(ptr: *mut qpick::SearchResults) -> *mut
     match res.next() {
         Some(r) => to_raw_ptr(QpickSearchItem {
             query_id: r.query_id,
-            dist: r.dist,
+            dist: to_raw_ptr(QpickDistance {
+                keyword: r.dist.keyword,
+                cosine: r.dist.cosine.unwrap_or(-1.0),
+            }),
             query: if let Some(query) = r.query {
                 str_to_cstr(&query)
             } else {
@@ -194,6 +204,7 @@ pub extern "C" fn qpick_search_iter_next(ptr: *mut qpick::SearchResults) -> *mut
 
 make_free_fn!(qpick_search_results_free, *mut qpick::SearchResults);
 make_free_fn!(qpick_search_item_free, *mut QpickSearchItem);
+make_free_fn!(qpick_distance_free, *mut QpickDistance);
 
 // ------ dist iterator ---
 
@@ -202,7 +213,7 @@ make_free_fn!(qpick_search_item_free, *mut QpickSearchItem);
 #[allow(dead_code)]
 pub struct QpickDistItem {
     query: *mut libc::c_char,
-    dist: libc::c_float,
+    dist: *mut QpickDistance,
 }
 
 // Declare a function that returns the next item from a qpick vector
@@ -212,7 +223,10 @@ pub extern "C" fn qpick_dist_iter_next(ptr: *mut qpick::DistResults) -> *mut Qpi
     match res.next() {
         Some(r) => to_raw_ptr(QpickDistItem {
             query: str_to_cstr(&r.query),
-            dist: r.dist,
+            dist: to_raw_ptr(QpickDistance {
+                keyword: r.dist.keyword,
+                cosine: r.dist.cosine.unwrap_or(-1.0),
+            }),
         }),
         None => ::std::ptr::null_mut(),
     }

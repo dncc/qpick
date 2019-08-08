@@ -2,10 +2,11 @@ import os
 from .lib import ffi, lib
 
 class QpickResults(object):
-    def __init__(self, ptr, next_fn, free_fn, free_item_fn, autom_ptr=None,
+    def __init__(self, ptr, next_fn, free_fn, free_item_fn, free_dist_fn, autom_ptr=None,
                  autom_free_fn=None):
         self._free_fn = free_fn
         self._free_item_fn = free_item_fn
+        self._free_dist_fn = free_dist_fn
         self._ptr = ffi.gc(ptr, free_fn)
 
         self._next_fn = next_fn
@@ -45,10 +46,14 @@ class QpickSearchResults(QpickResults):
 
         query_id = item.query_id
         dist = item.dist
+        keyword_dist = dist.keyword
+        cosine_dist = None if dist.cosine == -1.0 else dist.cosine
         query = ffi.string(item.query).decode('utf8')
+
+        self._free_dist_fn(dist)
         self._free_item_fn(item)
 
-        return (query_id, dist, query)
+        return (query_id, cosine_dist, keyword_dist, query)
 
 class QpickDistResults(QpickResults):
     def __next__(self):
@@ -59,10 +64,13 @@ class QpickDistResults(QpickResults):
 
         query = ffi.string(item.query).decode('utf8')
         dist = item.dist
+        keyword_dist = dist.keyword
+        cosine_dist = None if dist.cosine == -1.0 else dist.cosine
+
         self._free_item_fn(item)
+        self._free_dist_fn(dist)
 
-        return (query, dist)
-
+        return (query, cosine_dist, keyword_dist)
 
 class Qpick(object):
     def __init__(self, dir_path=None, start_shard=None, end_shard=None, _pointer=None):
@@ -106,7 +114,8 @@ class Qpick(object):
         return QpickSearchResults(res_ptr,
                                 lib.qpick_search_iter_next,
                                 lib.qpick_search_results_free,
-                                lib.qpick_search_item_free)
+                                lib.qpick_search_item_free,
+                                lib.qpick_distance_free)
 
     # qpick.get_distances('q', ['a', 'b', 'c'])
     def get_distances(self, query, candidates):
@@ -126,7 +135,8 @@ class Qpick(object):
         return QpickDistResults(res_ptr,
                                 lib.qpick_dist_iter_next,
                                 lib.qpick_dist_results_free,
-                                lib.qpick_dist_item_free)
+                                lib.qpick_dist_item_free,
+                                lib.qpick_distance_free)
 
 
 def shard(file_path, nr_shards, output_dir, prefixes=[], create_i2q=True):
