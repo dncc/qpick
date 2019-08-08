@@ -6,5 +6,7 @@
     "terms_relevance_file": "terms_relevance.fst",
     "stopwords_file": "stopwords.txt",
     "synonyms_file": "synonyms.txt",
+    "words_file": "/home/dnc/workspace/cliqz/qpick/.data/words.txt",
+    "word_vecs_file": "/home/dnc/workspace/cliqz/qpick/.data/word_embeddings.bin",
     "i2q_file": "i2q"
 }

@@ -14,6 +14,8 @@ pub struct Config {
     pub stopwords_file: String,
     pub synonyms_file: String,
     pub i2q_file: String,
+    pub words_file: String,
+    pub word_vecs_file: String,
 }
 
 impl Config {
@@ -74,6 +76,16 @@ impl Config {
             _ => "",
         };
 
+        let words_file = match config["words_file"] {
+            Value::String(ref words_file) => words_file.as_str(),
+            _ => panic!("Failed to load words file name from the config!"),
+        };
+
+        let word_vecs_file = match config["word_vecs_file"] {
+            Value::String(ref word_vecs_file) => word_vecs_file.as_str(),
+            _ => panic!("Failed to load embeddings file name from the config!"),
+        };
+
         Config {
             id_size: id_size as usize,
             bucket_size: bucket_size as usize,
@@ -83,6 +95,8 @@ impl Config {
             synonyms_file: synonyms_file.to_string(),
             stopwords_file: stopwords_file.to_string(),
             i2q_file: i2q_file.to_string(),
+            words_file: words_file.to_string(),
+            word_vecs_file: word_vecs_file.to_string(),
         }
     }
 }

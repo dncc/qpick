@@ -11,12 +11,18 @@ ffi.cdef("""
     void string_free(char*);
 
     /**
-       Iterator
+       Search Iterator
     **/
+
+    typedef struct {
+        float     keyword;
+        float     cosine;
+    } QpickDistance;
+
     typedef struct {
         uint64_t  query_id;
         char*     query;
-        float     dist;
+        QpickDistance*  dist;
     } QpickSearchItem;
 
     typedef struct SearchResults SearchResults;
@@ -26,6 +32,7 @@ ffi.cdef("""
 
     void qpick_search_results_free(SearchResults*);
     void qpick_search_item_free(QpickSearchItem*);
+    void qpick_distance_free(QpickDistance*);
 
     /**
        string vec
@@ -40,7 +47,7 @@ ffi.cdef("""
     **/
     typedef struct {
         char*  query;
-        float  dist;
+        QpickDistance*  dist;
     } QpickDistItem;
 
     typedef struct DistResults DistResults;

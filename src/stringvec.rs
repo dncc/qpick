@@ -47,6 +47,7 @@
 use std::fs::{read_dir, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter, Error, SeekFrom};
+use std::mem::MaybeUninit;
 
 use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
 use memmap::Mmap;

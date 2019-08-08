@@ -56,7 +56,10 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         .collect::<Vec<String>>();
 
     let r = qpick.get_distances(&args.arg_query, &candidates);
-    let v: Vec<(String, f32)> = r.into_iter().map(|dr| (dr.query, dr.dist)).collect();
+    let v: Vec<(String, Option<f32>, f32)> = r
+        .into_iter()
+        .map(|r| (r.query, r.dist.cosine, r.dist.keyword))
+        .collect();
     println!("{:?}", v);
 
     Ok(())

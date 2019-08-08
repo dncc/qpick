@@ -82,7 +82,7 @@ ssh/build/dep:
 	ssh root@${IP} "mkdir -p ${HOME_REMOTE_PATH} && \
 		cd ${HOME_REMOTE_PATH}/qpick && \
 		apt-get update && \
-		apt-get install -y libffi-dev && \
+		apt-get install -y libffi-dev libopenblas-dev && \
 		curl https://sh.rustup.rs -sSf | sh -s -- -y"
 
 .PHONY: ssh/build/qpick
