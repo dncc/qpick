@@ -599,8 +599,22 @@ pub fn parse(
         );
     }
 
+    // insert 2nd most relevant word
+    if words_vec[1].2 > 0.8 * words_vec[0].2 {
+        update(
+            &mut ngrams,
+            &mut ngrams_relevs,
+            &mut ngrams_ids,
+            words_vec[1].1.clone(),
+            words_vec[1].2,
+            vec![words_vec[1].0],
+            &synonyms,
+        );
+    }
+
     // identify must have word
-    if words_len < 5 || words_vec[0].2 > 1.8 * word_thresh
+    if words_len < 5
+        || words_vec[0].2 > 1.8 * word_thresh
         || (words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
     {
         if words_len > 1 && words_vec[0].2 > 0.6 {
@@ -720,9 +734,9 @@ pub fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use util::*;
     use fst::Map;
     use stopwords;
+    use util::*;
 
     #[test]
     fn test_u8_find_and_replace() {
@@ -816,16 +830,15 @@ mod tests {
     fn test_get_stop_ngrams() {
         let stopwords = match stopwords::load("./index/stopwords.txt") {
             Ok(stopwords) => stopwords,
-            Err(_) => panic!(
-                [
-                    BYELL,
-                    "No such file or directory: ",
-                    ECOL,
-                    BRED,
-                    "../index/stopwords.txt",
-                    ECOL
-                ].join("")
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                "../index/stopwords.txt",
+                ECOL
+            ]
+            .join("")),
         };
 
         let tr_map = match Map::from_path("./index/terms_relevance.fst") {
@@ -972,16 +985,15 @@ mod tests {
     fn test_parse() {
         let stopwords = match stopwords::load("./index/stopwords.txt") {
             Ok(stopwords) => stopwords,
-            Err(_) => panic!(
-                [
-                    BYELL,
-                    "No such file or directory: ",
-                    ECOL,
-                    BRED,
-                    "../index/stopwords.txt",
-                    ECOL
-                ].join("")
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                "../index/stopwords.txt",
+                ECOL
+            ]
+            .join("")),
         };
 
         let tr_map = match Map::from_path("./index/terms_relevance.fst") {
