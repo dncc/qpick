@@ -1,9 +1,9 @@
 extern crate serde_json;
+use serde_json::Value;
+use std::fs::File;
+use std::io::BufReader;
 use std::io::Error;
 use std::io::Read;
-use std::io::BufReader;
-use std::fs::File;
-use serde_json::Value;
 
 pub struct Config {
     pub id_size: usize,     // query id size in bytes (4 for id + 1 for relevance)

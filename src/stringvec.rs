@@ -1,59 +1,59 @@
 /*
-  Mmapped string vector (index -> string mapping):
+ Mmapped string vector (index -> string mapping):
 
-  String vector file layout:
+ String vector file layout:
 
-  [8B off_a][[6B off_0] [6B off_1]  ... [6B off_n][[string 1][string 2] ... [string n]]
-  ^         ^                                     ^          ^                        ^
-  |         |                                     |          |                        |
-  0 ------- 8 ------------------------- [8 + off_a] --- [8 + off_a + off_1] --- [8 + off_a + off_n]
+ [8B off_a][[6B off_0] [6B off_1]  ... [6B off_n][[string 1][string 2] ... [string n]]
+ ^         ^                                     ^          ^                        ^
+ |         |                                     |          |                        |
+ 0 ------- 8 ------------------------- [8 + off_a] --- [8 + off_a + off_1] --- [8 + off_a + off_n]
 
-  - first 8 bytes (u64) are used to store size of the offsets' array (off_a):
+ - first 8 bytes (u64) are used to store size of the offsets' array (off_a):
 
-        off_a = [number_of_strings + 1] * offset_size
+       off_a = [number_of_strings + 1] * offset_size
 
-    where offset_size is 6 bytes and the +1 slot is for the offset zero, set to 0 value
+   where offset_size is 6 bytes and the +1 slot is for the offset zero, set to 0 value
 
-  - offsets start at byte [8] and end at byte [8 + off_a - 1]
+ - offsets start at byte [8] and end at byte [8 + off_a - 1]
 
-  - offset for the first string (*off_1) is stored at the [off_1] address (off_0 stores value 0)
+ - offset for the first string (*off_1) is stored at the [off_1] address (off_0 stores value 0)
 
-  - offset for the last string (*off_n) is stored at the [off_n] address
+ - offset for the last string (*off_n) is stored at the [off_n] address
 
-  - strings start at [8 + off_a] and end at [8 + off_a + off_n] address, that is also the EOF.
+ - strings start at [8 + off_a] and end at [8 + off_a + off_n] address, that is also the EOF.
 
 
-    write:
-        // The comment bellow for the file string vec layout
-        let mut str_vec_writer = StrVecWriter::init();
-        for query in string_vec.into_iter() {
-            str_vec_writer.add(query);
-        }
-        str_vec_writer.write_to_file(&file_path);
+   write:
+       // The comment bellow for the file string vec layout
+       let mut str_vec_writer = StrVecWriter::init();
+       for query in string_vec.into_iter() {
+           str_vec_writer.add(query);
+       }
+       str_vec_writer.write_to_file(&file_path);
 
-    read:
-        // loads strings and their offsets from files
-        let offsets = unsafe { memmap::Mmap::map(&File::open("./offsets.bin").unwrap()).unwrap() };
-        let str_vec = StrVec::load("./queries.bin", &offsets);
+   read:
+       // loads strings and their offsets from files
+       let offsets = unsafe { memmap::Mmap::map(&File::open("./offsets.bin").unwrap()).unwrap() };
+       let str_vec = StrVec::load("./queries.bin", &offsets);
 
-    access:
-        // string indexes start from 0, access the first string:
-        str_vec[0] -> &str
-        // access the 10th string
-        str_vec[9] -> &str
+   access:
+       // string indexes start from 0, access the first string:
+       str_vec[0] -> &str
+       // access the 10th string
+       str_vec[9] -> &str
 
- */
+*/
 
 use std::fs::{read_dir, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter, Error, SeekFrom};
 
-use std::path::Path;
-use memmap::Mmap;
-use shard::parse_query_line;
-use pbr::ProgressBar;
-use std::mem::size_of;
 use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
+use memmap::Mmap;
+use pbr::ProgressBar;
+use shard::parse_query_line;
+use std::mem::size_of;
+use std::path::Path;
 
 use util;
 
@@ -113,8 +113,8 @@ pub struct StrVec {
     strings: Mmap,
 }
 
-use std::str;
 use std::ops::Index;
+use std::str;
 impl Index<usize> for StrVec {
     type Output = str;
 
@@ -160,15 +160,20 @@ impl StrVec {
         );
 
         let strings = unsafe {
-            Mmap::map(&OpenOptions::new().read(true).open(path).expect(&[
-                BYELLOW,
-                NOF_MSG,
-                END_COL,
-                BRED,
-                &path.to_str().unwrap(),
-                END_COL,
-            ].join("")))
-                .unwrap()
+            Mmap::map(
+                &OpenOptions::new().read(true).open(path).expect(
+                    &[
+                        BYELLOW,
+                        NOF_MSG,
+                        END_COL,
+                        BRED,
+                        &path.to_str().unwrap(),
+                        END_COL,
+                    ]
+                    .join(""),
+                ),
+            )
+            .unwrap()
         };
         util::advise_ram(&strings[..]).expect(&format!("Advisory failed for i2q {:?}", &path));
 
@@ -231,7 +236,8 @@ impl StrVecWriter {
             Offset::max_value()
         );
 
-        &self.off_writer
+        &self
+            .off_writer
             .write_all(&Offset::from(offset).0)
             .expect("Unable to query offset");
         &self.off_writer.flush().expect("Offset flush failed!");
@@ -242,7 +248,8 @@ impl StrVecWriter {
     #[inline]
     pub fn add(&mut self, s: String) -> usize {
         // A race condition, if multiple writers access the same file.
-        &self.str_writer
+        &self
+            .str_writer
             .write_all(&s.as_bytes())
             .expect("Unable to write query text");
         &self.str_writer.flush().expect("String flush failed!");
