@@ -1,8 +1,8 @@
-use std::io::Error;
+use fnv::FnvHashSet;
+use std::fs::File;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::fs::File;
-use fnv::FnvHashSet;
+use std::io::Error;
 
 pub fn load(path: &str) -> Result<FnvHashSet<String>, Error> {
     let mut stopwords = FnvHashSet::default();

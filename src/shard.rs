@@ -1,25 +1,25 @@
-use std::io::Error;
-use std::io::prelude::*;
-use std::io::{BufReader, BufWriter, Write};
 use fst::Map;
 use std::fs::{read_dir, File, OpenOptions};
+use std::io::prelude::*;
+use std::io::Error;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 
+use config;
+use ngrams;
+use stopwords;
+use stringvec;
 use util;
 use util::{BRED, BYELL, ECOL};
-use config;
-use stopwords;
-use ngrams;
-use stringvec;
 
 use std::fs;
-use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::thread;
 
-use std::iter::FromIterator;
-use std::collections::{HashMap, HashSet};
 use fnv::FnvHashMap;
+use std::collections::{HashMap, HashSet};
+use std::iter::FromIterator;
 // use std::sync::{Arc, Mutex};
 
 const WRITE_BUFFER_SIZE: usize = 5 * 1024;
@@ -48,7 +48,8 @@ impl From<String> for QueryType {
 #[inline]
 pub fn parse_query_line(line: &str) -> Result<(String, String), Error> {
     let v: Vec<&str> = line.split("\t").map(|t| t.trim()).collect();
-    let v: Vec<&str> = v[0].trim_matches(|s| s == '"')
+    let v: Vec<&str> = v[0]
+        .trim_matches(|s| s == '"')
         .split(":")
         .map(|t| t.trim())
         .collect();
@@ -88,16 +89,15 @@ pub fn shard(
     let stopwords_path = &format!("{}/{}", output_dir, c.stopwords_file);
     let stopwords = match stopwords::load(stopwords_path) {
         Ok(stopwords) => stopwords,
-        Err(_) => panic!(
-            [
-                BYELL,
-                "No such file or directory: ",
-                ECOL,
-                BRED,
-                stopwords_path,
-                ECOL
-            ].join("")
-        ),
+        Err(_) => panic!([
+            BYELL,
+            "No such file or directory: ",
+            ECOL,
+            BRED,
+            stopwords_path,
+            ECOL
+        ]
+        .join("")),
     };
 
     let (sender, receiver): (Sender<u64>, Receiver<u64>) = mpsc::channel();
@@ -143,16 +143,15 @@ pub fn shard(
         let terms_relevance_path = &format!("{}/{}", &output_dir, &terms_relevance_file);
         let tr_map = match Map::from_path(terms_relevance_path) {
             Ok(tr_map) => tr_map,
-            Err(_) => panic!(
-                [
-                    BYELL,
-                    "No such file or directory: ",
-                    ECOL,
-                    BRED,
-                    terms_relevance_path,
-                    ECOL
-                ].join("")
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                terms_relevance_path,
+                ECOL
+            ]
+            .join("")),
         };
 
         let query_files: Vec<(_, _)> = queries_parts

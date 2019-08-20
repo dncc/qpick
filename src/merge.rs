@@ -1,6 +1,6 @@
+use fst::{raw, Error, Streamer};
 use std::fs::File;
 use std::io::BufWriter;
-use fst::{raw, Error, Streamer};
 
 static SEPARATOR: &'static str = "\u{0}\u{0}";
 

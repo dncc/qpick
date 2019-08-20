@@ -1,22 +1,22 @@
-use std::fs;
-use fst::{Error, MapBuilder};
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufReader;
-use std::cmp::{Ordering, PartialOrd};
-use std::io::BufWriter;
-use std::fs::OpenOptions;
 use byteorder::{LittleEndian, WriteBytesExt};
-use std::io::SeekFrom;
+use fst::{Error, MapBuilder};
+use std::cmp::{Ordering, PartialOrd};
+use std::collections::HashMap;
+use std::fs;
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::SeekFrom;
 use std::sync::mpsc;
 use std::thread;
 
-use util;
 use config;
+use util;
 
-use std::collections::BinaryHeap;
 use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 use util::{BRED, BYELL, ECOL};
 
@@ -146,7 +146,8 @@ pub fn index(
                 bucket_size,
                 &out_shard_name,
                 &out_map_name,
-            ).unwrap();
+            )
+            .unwrap();
 
             sender.send(()).unwrap();
         });
