@@ -255,7 +255,7 @@ fn get_norm_query_vec(query: &str, mode: ParseMode) -> (Vec<String>, FnvHashMap<
     }
 
     // join sparse words e.g.: '@x e l e n e x', '@xe l e n e x' etc.
-    if words.iter().all(|w| w.len() <= 4) {
+    if (words.len() > 2 || !suffix_letters.is_empty()) && words.iter().all(|w| w.len() <= 4) {
         words = suffix_words(&mut words, &mut suffix_letters);
     } else if mode == ParseMode::Search {
         synonyms = suffix_synonyms(&mut words, &mut suffix_letters);
@@ -613,14 +613,15 @@ pub fn parse(
     }
 
     // identify must have word
-    if words_len < 5
-        || words_vec[0].2 > 1.8 * word_thresh
-        || (words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
+    if words_vec[0].2 > 1.8 * word_thresh
+        || (words_len > 1 && words_vec[0].2 > 0.6)
+        || (words_len > 2 && words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
     {
-        if words_len > 1 && words_vec[0].2 > 0.6 {
-            // the top word is too important to miss
-            must_have.push(words_vec[0].0);
-        } else if words_len >= 2 && words_vec[1].2 < 0.83 * words_vec[0].2 {
+        must_have.push(words_vec[0].0);
+    } else if words_len <= 5 {
+        if (words_len > 3 && words_vec[1].2 < 0.85 * words_vec[0].2)
+            || (words_len > 2 && words_vec[1].2 < 0.83 * words_vec[0].2)
+        {
             for (word_idx, word, word_rel) in words_vec.iter() {
                 // skip serial numbers, dates, 's01' 's02' type of words,
                 if word.chars().any(char::is_numeric) {
@@ -959,6 +960,17 @@ mod tests {
             get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
             e
         );
+
+        let q = "bdv e670";
+        let e = vec!["bdv", "e670"];
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
+            e
+        );
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
+            e
+        );
     }
 
     fn assert_must_have_words_ngrams_ids(
@@ -1019,6 +1031,7 @@ mod tests {
                 ("genres txt literature", vec![2, 3, 4]),
                 ("list of literature", vec![0, 1, 2]),
                 ("genres txt list of", vec![0, 1, 3, 4]),
+                ("genres", vec![3]),
             ],
         );
 
@@ -1038,6 +1051,7 @@ mod tests {
                 ("e01 friends", vec![0, 2]),
                 ("e01 stream", vec![2, 3]),
                 ("e01 friends s01", vec![2, 1, 0]),
+                ("s01", vec![1]), // fix e02 is missing but it's the top word
             ],
         );
 
@@ -1113,6 +1127,7 @@ mod tests {
                 ("4500e configuration", vec![1, 4]),
                 ("4500e cisco", vec![0, 1]),
                 ("4500e power", vec![1, 2]),
+                ("4500e", vec![1]),
             ],
         );
 
@@ -1347,6 +1362,7 @@ mod tests {
                 ("e01 friends", vec![0, 2]),
                 ("e01 stream", vec![2, 3]),
                 ("e01 friends s01", vec![2, 1, 0]),
+                ("s01", vec![1]), // fix e02 is missing but it's the top word
             ],
         );
 
@@ -1356,13 +1372,9 @@ mod tests {
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![0],
+            vec![],
             vec!["calypso", "k5177"],
-            vec![
-                ("calypso k5177", vec![0, 1]),
-                ("calypso", vec![0]),
-                ("k5177", vec![1]),
-            ],
+            vec![("calypso k5177", vec![0, 1]), ("k5177", vec![1])],
         );
 
         let q = "kenzan flowers size";
@@ -1423,7 +1435,6 @@ mod tests {
             vec![
                 ("and callintransaction h2", vec![1, 2, 3]),
                 ("and callintransaction ormlite", vec![0, 1, 2]),
-                ("ormlite", vec![0]),
                 ("callintransaction h2", vec![1, 3]),
                 ("callintransaction ormlite", vec![0, 1]),
                 ("and callintransaction", vec![1, 2]),
@@ -1434,9 +1445,8 @@ mod tests {
         // assert equal outcomes for different parsing modes [ormlite missing on indexing part]
         let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
             parse(q, &stopwords, &tr_map, ParseMode::Search);
-        let (_, _, mut i_ngrams_ids, i_words, _, i_must_have) =
+        let (_, _, i_ngrams_ids, i_words, _, i_must_have) =
             parse(q, &stopwords, &tr_map, ParseMode::Index);
-        i_ngrams_ids.insert("ormlite".to_string(), vec![0]);
         assert_eq!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
@@ -1460,6 +1470,7 @@ mod tests {
                 ("bicycle first", vec![6, 3]),
                 ("bicycle the was who", vec![0, 1, 2, 6]),
                 ("bicycle invent", vec![5, 6]),
+                ("invent", vec![5]),
             ],
         );
     }
