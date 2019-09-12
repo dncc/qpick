@@ -86,7 +86,7 @@ fn update(
 }
 
 #[inline]
-fn u8_find_and_replace<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> {
+pub fn u8_find_and_replace<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> {
     lazy_static! {
         static ref PUNCT_RE: Regex = Regex::new(PUNCT_SYMBOLS).unwrap();
     }

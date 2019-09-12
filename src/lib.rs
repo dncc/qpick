@@ -557,10 +557,15 @@ impl<'a> Qpick<'a> {
             .collect::<Vec<KeywordMatchResult>>();
         keyword_matches.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
 
-        let mut words_vec = self.word_vecs.get_words_vec(&words);
+        let mut words_vec = self.word_vecs.get_combined_vec(&words);
         if !words_vec.is_empty() {
             word_vec::normalize(&mut words_vec[..]);
         };
+
+        let words_set = words
+            .iter()
+            .map(|w| w.to_string())
+            .collect::<FnvHashSet<String>>();
 
         let mut search_results: Vec<SearchResult> = keyword_matches
             .into_iter()
@@ -573,10 +578,13 @@ impl<'a> Qpick<'a> {
                     .map(|i2q| i2q[*sh_qid as usize].to_string())
                     .unwrap_or(String::from(""));
 
+                let cosine_dist =
+                    self.cosine_diff_distance(&words_set, &words, &mquery, &m.missing_words);
+
                 let dist = Distance {
                     query_id: m.query_id,
                     keyword: m.dist,
-                    cosine: self.cosine_distance(&words_vec, &mquery),
+                    cosine: cosine_dist,
                 };
 
                 SearchResult {
@@ -593,18 +601,79 @@ impl<'a> Qpick<'a> {
     }
 
     #[inline]
+    fn cosine_diff_distance(
+        &self,
+        words_set: &FnvHashSet<String>,
+        words: &Vec<String>,
+        cand_query: &str,
+        missing_words: &Vec<usize>,
+    ) -> Option<f32> {
+        let cand_query = ngrams::u8_find_and_replace(cand_query);
+        let cand_words = cand_query
+            .clone()
+            .split(" ")
+            .filter(|w| w.len() > 1 || (w.len() == 1 && w.chars().next().unwrap().is_digit(10)))
+            .map(|w| w.to_string())
+            .collect::<FnvHashSet<String>>();
+
+        let match_words = cand_words
+            .intersection(&words_set)
+            .map(|w| w.to_string())
+            .collect::<Vec<String>>();
+        let mut rhs_match_vec = self.word_vecs.get_combined_vec(&match_words);
+        if rhs_match_vec.is_empty() {
+            return None;
+        }
+
+        let missing_words = missing_words
+            .iter()
+            .map(|i| words[*i].to_string())
+            .collect::<Vec<String>>();
+        let missing_vec = self.word_vecs.get_combined_vec(&missing_words);
+
+        let excess_words = cand_words
+            .difference(&words_set)
+            .map(|w| w.to_string())
+            .collect::<Vec<String>>();
+        let excess_vec = self.word_vecs.get_combined_vec(&excess_words);
+
+        let mut lhs_match_vec = rhs_match_vec.clone();
+        if !missing_vec.is_empty() {
+            word_vec::subtract(&mut lhs_match_vec, &missing_vec);
+        }
+        if !excess_vec.is_empty() {
+            word_vec::subtract(&mut rhs_match_vec, &excess_vec);
+        }
+
+        word_vec::normalize(&mut rhs_match_vec[..]);
+        word_vec::normalize(&mut lhs_match_vec[..]);
+
+        Some(
+            1.0 - util::max(
+                0.0,
+                util::min(
+                    word_vec::UPPER_COS_BOUND,
+                    word_vec::dot(&rhs_match_vec, &lhs_match_vec),
+                ),
+            ),
+        )
+    }
+
+    #[inline]
+    #[allow(dead_code)]
     fn cosine_distance(&self, orig_words_vec: &Vec<f32>, match_query: &str) -> Option<f32> {
         if orig_words_vec.is_empty() {
             return None;
         }
 
+        let match_query = ngrams::u8_find_and_replace(match_query);
         let match_words = match_query
             .clone()
             .split(" ")
             .filter(|w| w.len() > 1 || (w.len() == 1 && w.chars().next().unwrap().is_digit(10)))
             .map(|w| w.to_string())
             .collect::<Vec<String>>();
-        let mut match_words_vec = self.word_vecs.get_words_vec(&match_words);
+        let mut match_words_vec = self.word_vecs.get_combined_vec(&match_words);
 
         if match_words_vec.is_empty() {
             return None;
@@ -636,10 +705,10 @@ impl<'a> Qpick<'a> {
             ngrams::ParseMode::Search,
         );
 
-        let mut words_vec = self.word_vecs.get_words_vec(&words);
-        if !words_vec.is_empty() {
-            word_vec::normalize(&mut words_vec[..]);
-        };
+        let words_set = words
+            .iter()
+            .map(|w| w.to_string())
+            .collect::<FnvHashSet<String>>();
 
         let ngrams_trs: FnvHashMap<String, f32> = ngrams
             .iter()
@@ -679,7 +748,15 @@ impl<'a> Qpick<'a> {
             });
             let keyword_dist = util::max(1.0 - sim, 0.0);
 
-            let cosine_dist = self.cosine_distance(&words_vec, &cand_query);
+            let missing_words = words_rel_vec
+                .into_iter()
+                .enumerate()
+                .filter(|(_, r)| *r == 0.0)
+                .map(|(i, _)| i)
+                .collect::<Vec<usize>>();
+
+            let cosine_dist =
+                self.cosine_diff_distance(&words_set, &words, &cand_query, &missing_words);
 
             dist_results.push(DistanceResult {
                 query: cand_query.to_string(),

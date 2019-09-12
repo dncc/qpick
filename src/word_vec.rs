@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use blas;
 use std::mem::MaybeUninit;
 
-pub const DIM: usize = 100;
+pub const DIM: usize = 201;
 pub const UPPER_COS_BOUND: f32 = 1.0;
 
 #[inline]
@@ -20,9 +20,13 @@ pub fn normalize(v: &mut [f32]) {
 
 #[inline]
 pub fn dot(v: &[f32], u: &[f32]) -> f32 {
-    let len: i32 = v.len() as i32;
+    // let len: i32 = v.len() as i32;
+    unsafe { blas::sdot(DIM as i32, v, 1, u, 1) }
+}
 
-    unsafe { blas::sdot(len, v, 1, u, 1) }
+#[inline]
+pub fn subtract(mut v: &mut [f32], u: &[f32]) {
+    unsafe { blas::saxpy(DIM as i32, -1f32, u, 1, &mut v, 1) }
 }
 
 // --- word dict and word vec
@@ -45,6 +49,11 @@ impl WordDict {
         Self {
             word_to_id: word_to_id,
         }
+    }
+
+    #[inline]
+    pub fn get_word_id(self: &Self, word: &str) -> Option<&usize> {
+        self.word_to_id.get(word)
     }
 
     #[inline]
@@ -114,7 +123,16 @@ impl<'a> WordVecs<'a> {
     }
 
     #[inline]
-    pub fn get_words_vec(self: &Self, words: &Vec<String>) -> Vec<f32> {
+    pub fn get_vec(self: &Self, word: &str) -> Vec<f32> {
+        if let Some(word_id) = self.word_dict.get_word_id(word) {
+            return self.word_vecs[*word_id].0.to_vec();
+        }
+
+        vec![]
+    }
+
+    #[inline]
+    pub fn get_combined_vec(self: &Self, words: &Vec<String>) -> Vec<f32> {
         let word_ids = self.word_dict.get_words_ids(words);
         if word_ids.is_empty() {
             return vec![];
