@@ -1,7 +1,7 @@
-use std::io;
+use std::cmp::PartialOrd;
 use std::error;
 use std::fmt;
-use std::cmp::PartialOrd;
+use std::io;
 
 extern crate seahash;
 
@@ -66,9 +66,9 @@ pub fn as_ptr<T>(v: &[T]) -> *const T {
 }
 
 /*
-    Elegant pairing function http://szudzik.com/ElegantPairing.pdf
-    TODO implement with bignum, otherwise might overflow!
- */
+   Elegant pairing function http://szudzik.com/ElegantPairing.pdf
+   TODO implement with bignum, otherwise might overflow!
+*/
 #[inline]
 pub fn elegant_pair(x: u64, y: u64) -> Result<u64> {
     let z: u64 = match x >= y {
@@ -210,11 +210,11 @@ pub static BYELL: &str = "\x1B[0;33m";
 pub static ECOL: &str = "\x1B[0m";
 
 // tmp file
-use std::str;
-use rand::Rng;
 use rand::distributions::Alphanumeric;
-use std::path::PathBuf;
+use rand::Rng;
 use std::env::temp_dir;
+use std::path::PathBuf;
+use std::str;
 
 pub fn tmp_file_path(prefix: &str, suffix: &str, rand_len: usize) -> PathBuf {
     let mut buf = String::with_capacity(prefix.len() + suffix.len() + rand_len);

@@ -14,28 +14,28 @@ extern crate rand;
 extern crate regex;
 extern crate serde_json;
 
-use std::sync::Arc;
+use fnv::{FnvHashMap, FnvHashSet};
+use std::cmp::{Ordering, PartialOrd};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::cmp::{Ordering, PartialOrd};
-use std::collections::HashMap;
-use fnv::{FnvHashMap, FnvHashSet};
+use std::sync::Arc;
 
 use byteorder::{ByteOrder, LittleEndian};
-use fst::Map;
 use fst::raw::{Fst, MmapReadOnly};
+use fst::Map;
 use memmap::Mmap;
 
 use fst::Error;
 
 #[macro_use]
 pub mod util;
-pub mod config;
-pub mod ngrams;
-pub mod merge;
-pub mod shard;
 pub mod builder;
+pub mod config;
+pub mod merge;
+pub mod ngrams;
+pub mod shard;
 pub mod stopwords;
 pub mod stringvec;
 
@@ -61,6 +61,7 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 
 pub const DIST_THRESH: f32 = 0.951; // take only queries with smaller distance [0, 1]
+pub const FETCH_MIN: usize = 100; // get at least this many keyword matched results
 
 make_static_var_and_getter!(_get_shard_size, SHARD_SIZE, usize);
 
@@ -100,8 +101,8 @@ pub struct SearchShardResult {
     pub shard_id: u8,        // id of the _query_ shard (i2q, not ngram shard)
     pub shard_query_id: u32, // query id unique on a shard level
     pub ngram_idx: usize,    // index of an i-th ngram in a query
-    pub ngram_rel: f32, // relevance of an i-th ngram: [∑₁_ₙ (query_word_relₖ)] * IDFᵢ
-    pub weight_rel: f32, // weight coefficient for a word relevance, relative to the query
+    pub ngram_rel: f32,      // relevance of an i-th ngram: [∑₁_ₙ (query_word_relₖ)] * IDFᵢ
+    pub weight_rel: f32,     // weight coefficient for a word relevance, relative to the query
     pub query_ngram_rel: f32,
     pub ngram: String,
     pub query: Option<String>,
@@ -304,31 +305,29 @@ impl Qpick {
         let stopwords_path = &format!("{}/{}", path, c.stopwords_file);
         let stopwords = match stopwords::load(stopwords_path) {
             Ok(stopwords) => stopwords,
-            Err(_) => panic!(
-                [
-                    BYELL,
-                    "No such file or directory: ",
-                    ECOL,
-                    BRED,
-                    stopwords_path,
-                    ECOL
-                ].join("")
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                stopwords_path,
+                ECOL
+            ]
+            .join("")),
         };
 
         let terms_relevance_path = &format!("{}/{}", path, c.terms_relevance_file);
         let terms_relevance = match Map::from_path(terms_relevance_path) {
             Ok(terms_relevance) => terms_relevance,
-            Err(_) => panic!(
-                [
-                    BYELL,
-                    "No such file or directory: ",
-                    ECOL,
-                    BRED,
-                    terms_relevance_path,
-                    ECOL
-                ].join("")
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                terms_relevance_path,
+                ECOL
+            ]
+            .join("")),
         };
 
         let shard_indexes: Vec<u32> = (shard_range.start..shard_range.end).collect();
@@ -442,7 +441,8 @@ impl Qpick {
                     self.id_size,
                     self.shard_num,
                     with_tfidf,
-                ).unwrap()
+                )
+                .unwrap()
             })
             .collect();
 
@@ -489,18 +489,18 @@ impl Qpick {
 
         let search_results: Vec<SearchResult> = keyword_matches
             .into_iter()
-            .take(count.unwrap_or(100)) //TODO put into config
-            .map(|r| {
-                let (sh_qid, sh_id) = ids_map.get(&r.query_id).unwrap();
-                let query = self.shards[*sh_id as usize]
+            .take(util::max(count.unwrap_or(FETCH_MIN), FETCH_MIN))
+            .map(|m| {
+                let (sh_qid, sh_id) = ids_map.get(&m.query_id).unwrap();
+                let mquery = self.shards[*sh_id as usize]
                     .i2q
                     .as_ref()
                     .map(|i2q| i2q[*sh_qid as usize].to_string());
 
                 SearchResult {
-                    query_id: r.query_id,
-                    dist: r.dist,
-                    query: query,
+                    query_id: m.query_id,
+                    dist: m.dist,
+                    query: mquery,
                 }
             })
             .collect();
@@ -536,7 +536,8 @@ impl Qpick {
             );
 
             // round to 2 decimals, so we get same distances here and in search results
-            let ctrs = ctrs.iter()
+            let ctrs = ctrs
+                .iter()
                 .map(|ctr| (*ctr * 100.0).round() / 100.0)
                 .collect::<Vec<f32>>();
 
@@ -599,7 +600,8 @@ impl Qpick {
         count: u32,
         with_tfidf: bool,
     ) -> String {
-        let mut res: Vec<(u64, f32, String)> = self.get(query, 30 * count, with_tfidf)
+        let mut res: Vec<(u64, f32, String)> = self
+            .get(query, 30 * count, with_tfidf)
             .into_iter()
             .map(|r| (r.query_id, r.dist, r.query.unwrap_or("".to_string())))
             .collect();
