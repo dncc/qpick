@@ -569,7 +569,7 @@ impl<'a> Qpick<'a> {
 
         let mut search_results: Vec<SearchResult> = keyword_matches
             .into_iter()
-            .take(count.unwrap_or(100))
+            .take(util::max(count.unwrap_or(FETCH_MIN), FETCH_MIN))
             .map(|m| {
                 let (sh_qid, sh_id) = ids_map.get(&m.query_id).unwrap();
                 let mquery = self.shards[*sh_id as usize]
