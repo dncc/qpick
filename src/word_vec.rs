@@ -6,21 +6,19 @@ use std::io::{BufRead, BufReader};
 use blas;
 use std::mem::MaybeUninit;
 
-pub const DIM: usize = 201;
+pub const DIM: usize = 201; // TODO in the config!
 pub const UPPER_COS_BOUND: f32 = 1.0;
 
 #[inline]
 pub fn normalize(v: &mut [f32]) {
-    let len: i32 = v.len() as i32;
     unsafe {
-        let norm: f32 = blas::snrm2(len, v, 1);
-        blas::sscal(len, 1.0 / norm, v, 1)
+        let norm: f32 = blas::snrm2(DIM as i32, v, 1);
+        blas::sscal(DIM as i32, 1.0 / norm, v, 1)
     }
 }
 
 #[inline]
 pub fn dot(v: &[f32], u: &[f32]) -> f32 {
-    // let len: i32 = v.len() as i32;
     unsafe { blas::sdot(DIM as i32, v, 1, u, 1) }
 }
 

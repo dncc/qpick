@@ -638,15 +638,17 @@ impl<'a> Qpick<'a> {
         let excess_vec = self.word_vecs.get_combined_vec(&excess_words);
 
         let mut lhs_match_vec = rhs_match_vec.clone();
+
         if !missing_vec.is_empty() {
             word_vec::subtract(&mut lhs_match_vec, &missing_vec);
         }
+
         if !excess_vec.is_empty() {
             word_vec::subtract(&mut rhs_match_vec, &excess_vec);
         }
 
-        word_vec::normalize(&mut rhs_match_vec[..]);
         word_vec::normalize(&mut lhs_match_vec[..]);
+        word_vec::normalize(&mut rhs_match_vec[..]);
 
         Some(
             1.0 - util::max(
@@ -697,7 +699,7 @@ impl<'a> Qpick<'a> {
         }
 
         let mut dist_results: Vec<DistanceResult> = vec![];
-        let (ngrams, trs, ngrams_ids, words, wrs, _) = ngrams::parse(
+        let (_, _, _, words, wrs, _) = ngrams::parse(
             &query,
             &self.synonyms,
             &self.stopwords,
@@ -705,19 +707,19 @@ impl<'a> Qpick<'a> {
             ngrams::ParseMode::Search,
         );
 
+        let words_index = words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (w.to_string(), i))
+            .collect::<FnvHashMap<String, usize>>();
+
         let words_set = words
             .iter()
             .map(|w| w.to_string())
             .collect::<FnvHashSet<String>>();
 
-        let ngrams_trs: FnvHashMap<String, f32> = ngrams
-            .iter()
-            .zip(trs.iter())
-            .map(|(n, r)| (n.to_string(), *r))
-            .collect::<FnvHashMap<String, f32>>();
-
         for (cid, cand_query) in candidates.into_iter().enumerate() {
-            let (cand_ngrams, ctrs, _, _, _, _) = ngrams::parse(
+            let (_, _, _, cand_words, cand_wrs, _) = ngrams::parse(
                 &cand_query,
                 &self.synonyms,
                 &self.stopwords,
@@ -725,20 +727,10 @@ impl<'a> Qpick<'a> {
                 ngrams::ParseMode::Search,
             );
 
-            // round to 2 decimals, so we get same distances here and in search results
-            let ctrs = ctrs
-                .iter()
-                .map(|ctr| (*ctr * 100.0).round() / 100.0)
-                .collect::<Vec<f32>>();
-
             let mut words_rel_vec = vec![0.0; words.len()];
-            for (i, cngram) in cand_ngrams.iter().enumerate() {
-                for word_idx in ngrams_ids.get(cngram).unwrap_or(&vec![]) {
-                    let ngram_tr = ngrams_trs.get(cngram).unwrap();
-                    if words_rel_vec[*word_idx] == 0.0 {
-                        words_rel_vec[*word_idx] =
-                            wrs[*word_idx] * util::min(ctrs[i], *ngram_tr) / *ngram_tr;
-                    }
+            for (cword_idx, cword) in cand_words.iter().enumerate() {
+                if let Some(word_idx) = words_index.get(cword) {
+                    words_rel_vec[*word_idx] = util::min(wrs[*word_idx], cand_wrs[cword_idx]);
                 }
             }
 
