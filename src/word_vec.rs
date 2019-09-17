@@ -130,21 +130,23 @@ impl<'a> WordVecs<'a> {
     }
 
     #[inline]
-    pub fn get_combined_vec(self: &Self, words: &Vec<String>) -> Vec<f32> {
+    pub fn get_combined_vec(self: &Self, words: &Vec<String>) -> (Vec<f32>, usize) {
         let word_ids = self.word_dict.get_words_ids(words);
-        if word_ids.is_empty() {
-            return vec![];
-        }
 
-        word_ids
-            .iter()
-            .fold([0.0; DIM], |mut data, i| {
-                let WordVec(ref v) = self.word_vecs[*i];
-                unsafe { blas::saxpy(DIM as i32, 1f32, v, 1, &mut data, 1) }
+        let not_found = words.len() - word_ids.len();
+        (
+            word_ids
+                .iter()
+                .enumerate()
+                .fold([0.0; DIM], |mut data, (j, i)| {
+                    let WordVec(ref v) = self.word_vecs[*i];
+                    unsafe { blas::saxpy(DIM as i32, 1f32, v, 1, &mut data, 1) }
 
-                data
-            })
-            .to_vec()
+                    data
+                })
+                .to_vec(),
+            not_found,
+        )
     }
 
     #[inline]

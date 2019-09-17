@@ -557,11 +557,6 @@ impl<'a> Qpick<'a> {
             .collect::<Vec<KeywordMatchResult>>();
         keyword_matches.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
 
-        let mut words_vec = self.word_vecs.get_combined_vec(&words);
-        if !words_vec.is_empty() {
-            word_vec::normalize(&mut words_vec[..]);
-        };
-
         let words_set = words
             .iter()
             .map(|w| w.to_string())
@@ -620,30 +615,42 @@ impl<'a> Qpick<'a> {
             .intersection(&words_set)
             .map(|w| w.to_string())
             .collect::<Vec<String>>();
-        let mut rhs_match_vec = self.word_vecs.get_combined_vec(&match_words);
-        if rhs_match_vec.is_empty() {
-            return None;
-        }
+        let (mut rhs_match_vec, nf_match) = self.word_vecs.get_combined_vec(&match_words);
 
         let missing_words = missing_words
             .iter()
             .map(|i| words[*i].to_string())
             .collect::<Vec<String>>();
-        let missing_vec = self.word_vecs.get_combined_vec(&missing_words);
 
         let excess_words = cand_words
             .difference(&words_set)
             .map(|w| w.to_string())
             .collect::<Vec<String>>();
-        let excess_vec = self.word_vecs.get_combined_vec(&excess_words);
+
+        if missing_words.is_empty() && excess_words.is_empty() {
+            return Some(0.0);
+        }
+
+        let (missing_vec, nf_miss) = self.word_vecs.get_combined_vec(&missing_words);
+        let (excess_vec, nf_excs) = self.word_vecs.get_combined_vec(&excess_words);
+
+        // avoid NaN
+        // if (not found match words or match words are empty) AND
+        //    ((not found excess or excess words are empty) OR
+        //     (not found missing or missing words are empty))
+        if nf_match == match_words.len()
+            && (nf_miss == missing_words.len() || nf_excs == excess_words.len())
+        {
+            return None;
+        }
 
         let mut lhs_match_vec = rhs_match_vec.clone();
 
-        if !missing_vec.is_empty() {
+        if !missing_words.is_empty() {
             word_vec::subtract(&mut lhs_match_vec, &missing_vec);
         }
 
-        if !excess_vec.is_empty() {
+        if !excess_words.is_empty() {
             word_vec::subtract(&mut rhs_match_vec, &excess_vec);
         }
 
@@ -664,10 +671,6 @@ impl<'a> Qpick<'a> {
     #[inline]
     #[allow(dead_code)]
     fn cosine_distance(&self, orig_words_vec: &Vec<f32>, match_query: &str) -> Option<f32> {
-        if orig_words_vec.is_empty() {
-            return None;
-        }
-
         let match_query = ngrams::u8_find_and_replace(match_query);
         let match_words = match_query
             .clone()
@@ -675,9 +678,8 @@ impl<'a> Qpick<'a> {
             .filter(|w| w.len() > 1 || (w.len() == 1 && w.chars().next().unwrap().is_digit(10)))
             .map(|w| w.to_string())
             .collect::<Vec<String>>();
-        let mut match_words_vec = self.word_vecs.get_combined_vec(&match_words);
-
-        if match_words_vec.is_empty() {
+        let (mut match_words_vec, nf) = self.word_vecs.get_combined_vec(&match_words);
+        if nf == match_words.len() {
             return None;
         }
 
