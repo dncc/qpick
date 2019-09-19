@@ -8,5 +8,6 @@
     "synonyms_file": "synonyms.txt",
     "words_file": "/home/dnc/workspace/cliqz/qpick/.data/words.txt",
     "word_vecs_file": "/home/dnc/workspace/cliqz/qpick/.data/word_embeddings.bin",
+    "use_word_vectors": false,
     "i2q_file": "i2q"
 }

@@ -297,7 +297,7 @@ pub struct Qpick<'a> {
     id_size: usize,
     i2q_loaded: bool,
     shard_num: usize,
-    word_vecs: WordVecs<'a>,
+    word_vecs: Option<WordVecs<'a>>,
 }
 
 pub struct Shard {
@@ -432,7 +432,10 @@ impl<'a> Qpick<'a> {
             .fold(true, |b, (is_loaded, _)| b && *is_loaded);
         let shards = shards.into_iter().map(|(_, s)| s).collect();
 
-        let word_vecs = WordVecs::load(&c.words_file, &c.word_vecs_file);
+        let mut word_vecs = None;
+        if c.use_word_vectors {
+            word_vecs = Some(WordVecs::load(&c.words_file, &c.word_vecs_file));
+        }
 
         Qpick {
             config: c,
@@ -603,6 +606,10 @@ impl<'a> Qpick<'a> {
         cand_query: &str,
         missing_words: &Vec<usize>,
     ) -> Option<f32> {
+        if self.word_vecs.is_none() {
+            return None;
+        }
+
         let cand_query = ngrams::u8_find_and_replace(cand_query);
         let cand_words = cand_query
             .clone()
@@ -615,7 +622,12 @@ impl<'a> Qpick<'a> {
             .intersection(&words_set)
             .map(|w| w.to_string())
             .collect::<Vec<String>>();
-        let (mut rhs_match_vec, nf_match) = self.word_vecs.get_combined_vec(&match_words);
+        let match_len = match_words.len();
+        let (mut rhs_match_vec, nf_match) = self.word_vecs.as_ref().unwrap().get_combined_vec(
+            &match_words,
+            &self.terms_relevance,
+            &self.stopwords,
+        );
 
         let missing_words = missing_words
             .iter()
@@ -631,8 +643,32 @@ impl<'a> Qpick<'a> {
             return Some(0.0);
         }
 
-        let (missing_vec, nf_miss) = self.word_vecs.get_combined_vec(&missing_words);
-        let (excess_vec, nf_excs) = self.word_vecs.get_combined_vec(&excess_words);
+        let (mut missing_vec, nf_miss) = self.word_vecs.as_ref().unwrap().get_combined_vec(
+            &missing_words,
+            &self.terms_relevance,
+            &self.stopwords,
+        );
+        let (mut excess_vec, nf_excs) = self.word_vecs.as_ref().unwrap().get_combined_vec(
+            &excess_words,
+            &self.terms_relevance,
+            &self.stopwords,
+        );
+
+        // either no match words or none of them are found
+        if nf_match == match_len {
+            // no missing words or none of them found OR
+            // no excess words or none of them found
+            if nf_miss == missing_len || nf_excs == excess_len {
+                return None;
+            }
+
+            word_vec::normalize(&mut excess_vec[..]);
+            word_vec::normalize(&mut missing_vec[..]);
+
+            return Some(word_vec::cosine_distance(&excess_vec, &missing_vec));
+        }
+
+        // there are at least some match words at this point
 
         // avoid NaN
         // if (not found match words or match words are empty) AND
@@ -669,17 +705,29 @@ impl<'a> Qpick<'a> {
     }
 
     #[inline]
-    #[allow(dead_code)]
-    fn cosine_distance(&self, orig_words_vec: &Vec<f32>, match_query: &str) -> Option<f32> {
-        let match_query = ngrams::u8_find_and_replace(match_query);
-        let match_words = match_query
-            .clone()
-            .split(" ")
-            .filter(|w| w.len() > 1 || (w.len() == 1 && w.chars().next().unwrap().is_digit(10)))
-            .map(|w| w.to_string())
-            .collect::<Vec<String>>();
-        let (mut match_words_vec, nf) = self.word_vecs.get_combined_vec(&match_words);
-        if nf == match_words.len() {
+    fn cosine_distance(
+        &self,
+        query_words: &Vec<String>,
+        cand_words: &FnvHashSet<String>,
+    ) -> Option<f32> {
+        let (mut query_vec, nf) = self.word_vecs.as_ref().unwrap().get_combined_vec(
+            &query_words,
+            &self.terms_relevance,
+            &self.stopwords,
+        );
+
+        if nf == query_words.len() {
+            return None;
+        }
+
+        let cand_words = cand_words.iter().map(|w| w.to_string()).collect();
+        let (mut cand_vec, nf) = self.word_vecs.as_ref().unwrap().get_combined_vec(
+            &cand_words,
+            &self.terms_relevance,
+            &self.stopwords,
+        );
+
+        if nf == cand_words.len() {
             return None;
         }
 
