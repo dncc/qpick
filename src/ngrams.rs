@@ -1386,9 +1386,9 @@ mod tests {
                 ("genres txt list", vec![0, 3, 4]),
                 ("genres literature", vec![2, 3]),
                 ("list literature", vec![2, 0]),
-                ("genres txt literature", vec![2, 3, 4]),
-                ("list of literature", vec![0, 1, 2]),
-                ("genres txt list of", vec![0, 1, 3, 4]),
+                ("genres txt literature of", vec![1, 2, 3, 4]),
+                ("genres list literature", vec![2, 3, 0]),
+                ("genres of", vec![3, 1]),
                 ("genres", vec![3]),
             ],
         );
