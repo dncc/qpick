@@ -5,7 +5,7 @@ use util;
 use regex::Regex;
 use std::borrow::Cow;
 
-const MISS_WORD_REL: u64 = 6666;
+pub const MISS_WORD_REL: u64 = 6666;
 pub const WORDS_PER_QUERY: usize = 15;
 
 const PUNCT_SYMBOLS: &str = "[/@#!,'?:();.+-]";
@@ -94,7 +94,7 @@ fn update(
 }
 
 #[inline]
-fn u8_find_and_replace<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> {
+pub fn u8_find_and_replace<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> {
     lazy_static! {
         static ref PUNCT_RE: Regex = Regex::new(PUNCT_SYMBOLS).unwrap();
     }
@@ -255,7 +255,7 @@ fn get_norm_query_vec(query: &str, mode: ParseMode) -> (Vec<String>, FnvHashMap<
     }
 
     // join sparse words e.g.: '@x e l e n e x', '@xe l e n e x' etc.
-    if words.iter().all(|w| w.len() <= 4) {
+    if (words.len() > 2 || !suffix_letters.is_empty()) && words.iter().all(|w| w.len() <= 4) {
         words = suffix_words(&mut words, &mut suffix_letters);
     } else if mode == ParseMode::Search {
         synonyms = suffix_synonyms(&mut words, &mut suffix_letters);
@@ -375,6 +375,7 @@ pub fn get_stop_ngrams(
                 let mut next_i = word_idx.pop().unwrap();
                 while next_i < j && !linked_idx.contains(&next_i) {
                     stop_ngrams.push((words[next_i].to_string(), rels[next_i], vec![next_i]));
+                    linked_idx.insert(next_i);
                     next_i = word_idx.pop().unwrap();
                 }
             }
@@ -393,11 +394,24 @@ pub fn get_stop_ngrams(
                     skip_idx.insert(k);
                     linked_idx.insert(k);
                     linked_idx.insert(*i);
-                    stop_ngrams.push((
-                        bow2(&words[*i], &words[k]),
-                        rels[*i] + rels[k],
-                        vec![*i, k],
-                    ));
+
+                    if k == last_word_idx || stop_idx_set.contains(&(k + 1)) {
+                        stop_ngrams.push((
+                            bow2(&words[*i], &words[k]),
+                            rels[*i] + rels[k],
+                            vec![*i, k],
+                        ));
+
+                    // take also k+1 if it's not a stop word
+                    } else {
+                        skip_idx.insert(k + 1);
+                        linked_idx.insert(k + 1);
+                        stop_ngrams.push((
+                            bow3(&words[*i], &words[k], &words[k + 1]),
+                            rels[*i] + rels[k] + rels[k + 1],
+                            vec![*i, k, k + 1],
+                        ));
+                    }
                 }
 
             // only j is a stopword
@@ -418,7 +432,7 @@ pub fn get_stop_ngrams(
                         vec![*i, k],
                     ));
 
-                // take also k+1 if k is not the last word
+                // take also k+1 if it's not a stop word
                 } else {
                     skip_idx.insert(k + 1);
                     linked_idx.insert(k + 1);
@@ -431,9 +445,7 @@ pub fn get_stop_ngrams(
 
             // neither j, nor k are stopwords
             } else {
-                if (rels[j] <= rels[k] || words[j].len() >= 4 * words[k].len())
-                    && !linked_idx.contains(&j)
-                {
+                if words[j].len() >= 4 * words[k].len() && !linked_idx.contains(&j) {
                     linked_idx.insert(*i);
                     linked_idx.insert(j);
                     stop_ngrams.push((
@@ -599,14 +611,29 @@ pub fn parse(
         );
     }
 
+    // insert 2nd most relevant word
+    if words_vec[1].2 > 0.8 * words_vec[0].2 {
+        update(
+            &mut ngrams,
+            &mut ngrams_relevs,
+            &mut ngrams_ids,
+            words_vec[1].1.clone(),
+            words_vec[1].2,
+            vec![words_vec[1].0],
+            &synonyms,
+        );
+    }
+
     // identify must have word
-    if words_len < 5 || words_vec[0].2 > 1.8 * word_thresh
-        || (words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
+    if words_vec[0].2 > 1.8 * word_thresh
+        || (words_len > 1 && words_vec[0].2 > 0.6)
+        || (words_len > 2 && words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
     {
-        if words_len > 1 && words_vec[0].2 > 0.6 {
-            // the top word is too important to miss
-            must_have.push(words_vec[0].0);
-        } else if words_len > 2 && words_vec[1].2 < 0.95 * words_vec[0].2 {
+        must_have.push(words_vec[0].0);
+    } else if words_len <= 5 {
+        if (words_len > 3 && words_vec[1].2 < 0.85 * words_vec[0].2)
+            || (words_len > 2 && words_vec[1].2 < 0.83 * words_vec[0].2)
+        {
             for (word_idx, word, word_rel) in words_vec.iter() {
                 // skip serial numbers, dates, 's01' 's02' type of words,
                 if word.chars().any(char::is_numeric) {
@@ -720,9 +747,9 @@ pub fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use util::*;
     use fst::Map;
     use stopwords;
+    use util::*;
 
     #[test]
     fn test_u8_find_and_replace() {
@@ -816,16 +843,15 @@ mod tests {
     fn test_get_stop_ngrams() {
         let stopwords = match stopwords::load("./index/stopwords.txt") {
             Ok(stopwords) => stopwords,
-            Err(_) => panic!(
-                [
-                    BYELL,
-                    "No such file or directory: ",
-                    ECOL,
-                    BRED,
-                    "../index/stopwords.txt",
-                    ECOL
-                ].join("")
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                "../index/stopwords.txt",
+                ECOL
+            ]
+            .join("")),
         };
 
         let tr_map = match Map::from_path("./index/terms_relevance.fst") {
@@ -915,7 +941,18 @@ mod tests {
         assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "who was the first to invent bicycle";
-        let e = vec!["the was who", "first to", "invent", "bicycle"];
+        let e = vec!["the was who", "first", "invent to", "bicycle"];
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
+            e
+        );
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
+            e
+        );
+
+        let q = "youngest person to walk on the moon";
+        let e = vec!["youngest", "person", "to walk", "moon on the"];
         assert_eq!(
             get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
             e
@@ -938,6 +975,17 @@ mod tests {
 
         let q = "@xsel e n a x";
         let e = vec!["xselenax"];
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
+            e
+        );
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
+            e
+        );
+
+        let q = "bdv e670";
+        let e = vec!["bdv", "e670"];
         assert_eq!(
             get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
             e
@@ -972,16 +1020,15 @@ mod tests {
     fn test_parse() {
         let stopwords = match stopwords::load("./index/stopwords.txt") {
             Ok(stopwords) => stopwords,
-            Err(_) => panic!(
-                [
-                    BYELL,
-                    "No such file or directory: ",
-                    ECOL,
-                    BRED,
-                    "../index/stopwords.txt",
-                    ECOL
-                ].join("")
-            ),
+            Err(_) => panic!([
+                BYELL,
+                "No such file or directory: ",
+                ECOL,
+                BRED,
+                "../index/stopwords.txt",
+                ECOL
+            ]
+            .join("")),
         };
 
         let tr_map = match Map::from_path("./index/terms_relevance.fst") {
@@ -998,15 +1045,17 @@ mod tests {
             vec![2],
             vec!["list", "of", "literature", "genres", "txt"],
             vec![
-                ("genres list literature", vec![2, 3, 0]),
-                ("genres of", vec![3, 1]),
+                ("list literature of", vec![0, 1, 2]),
+                ("literature of", vec![1, 2]),
                 ("genres list", vec![3, 0]),
                 ("genres txt", vec![3, 4]),
+                ("genres txt list", vec![0, 3, 4]),
                 ("genres literature", vec![2, 3]),
                 ("list literature", vec![2, 0]),
-                ("genres txt literature", vec![2, 3, 4]),
-                ("list of literature", vec![0, 1, 2]),
-                ("genres txt list of", vec![0, 1, 3, 4]),
+                ("genres txt literature of", vec![1, 2, 3, 4]),
+                ("genres list literature", vec![2, 3, 0]),
+                ("genres of", vec![3, 1]),
+                ("genres", vec![3]),
             ],
         );
 
@@ -1026,6 +1075,7 @@ mod tests {
                 ("e01 friends", vec![0, 2]),
                 ("e01 stream", vec![2, 3]),
                 ("e01 friends s01", vec![2, 1, 0]),
+                ("s01", vec![1]), // fix e02 is missing but it's the top word
             ],
         );
 
@@ -1101,6 +1151,7 @@ mod tests {
                 ("4500e configuration", vec![1, 4]),
                 ("4500e cisco", vec![0, 1]),
                 ("4500e power", vec![1, 2]),
+                ("4500e", vec![1]),
             ],
         );
 
@@ -1171,19 +1222,21 @@ mod tests {
             vec![],
             vec!["fsck", "inode", "has", "imagic", "flag", "set"],
             vec![
-                ("flag has inode", vec![1, 2, 4]),
-                ("has inode imagic", vec![1, 2, 3]),
-                ("has inode set", vec![1, 2, 5]),
-                ("flag imagic", vec![3, 4]),
-                ("imagic set", vec![3, 5]),
-                ("fsck has inode", vec![0, 1, 2]),
-                ("fsck imagic inode", vec![3, 1, 0]),
+                ("fsck inode", vec![0, 1]),
                 ("flag fsck", vec![0, 4]),
-                ("fsck inode", vec![1, 0]),
+                // ("fsck imagic set", vec![2, 3, 5]),
+                ("has imagic", vec![2, 3]),
+                ("flag has imagic", vec![2, 3, 4]),
                 ("flag set", vec![4, 5]),
-                ("imagic inode", vec![3, 1]),
+                ("fsck has imagic", vec![0, 2, 3]),
+                ("fsck imagic inode", vec![3, 1, 0]),
+                ("has imagic set", vec![2, 3, 5]),
+                ("has imagic inode", vec![1, 2, 3]),
                 ("has inode", vec![1, 2]),
-                ("fsck imagic", vec![0, 3]),
+                ("imagic inode", vec![3, 1]),
+                ("flag inode", vec![1, 4]),
+                ("inode set", vec![1, 5]),
+                ("fsck imagic", vec![3, 0]),
             ],
         );
 
@@ -1196,13 +1249,14 @@ mod tests {
             vec![3],
             vec!["python", "programming", "to", "iota"],
             vec![
-                ("programming to python", vec![0, 1, 2]),
-                ("iota programming to", vec![1, 2, 3]),
-                ("iota programming", vec![3, 1]),
-                ("iota programming python", vec![3, 0, 1]),
+                ("iota to programming", vec![1, 2, 3]),
                 ("python to", vec![0, 2]),
+                ("iota to python", vec![0, 2, 3]),
+                ("iota to", vec![2, 3]),
+                ("iota python", vec![3, 0]),
+                ("iota programming python", vec![3, 0, 1]),
                 ("programming python", vec![0, 1]),
-                ("iota python", vec![0, 3]),
+                ("iota programming", vec![3, 1]),
                 ("iota", vec![3]),
             ],
         );
@@ -1335,6 +1389,7 @@ mod tests {
                 ("e01 friends", vec![0, 2]),
                 ("e01 stream", vec![2, 3]),
                 ("e01 friends s01", vec![2, 1, 0]),
+                ("s01", vec![1]), // fix e02 is missing but it's the top word
             ],
         );
 
@@ -1344,13 +1399,9 @@ mod tests {
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![0],
+            vec![],
             vec!["calypso", "k5177"],
-            vec![
-                ("calypso k5177", vec![0, 1]),
-                ("calypso", vec![0]),
-                ("k5177", vec![1]),
-            ],
+            vec![("calypso k5177", vec![0, 1]), ("k5177", vec![1])],
         );
 
         let q = "kenzan flowers size";
@@ -1411,7 +1462,6 @@ mod tests {
             vec![
                 ("and callintransaction h2", vec![1, 2, 3]),
                 ("and callintransaction ormlite", vec![0, 1, 2]),
-                ("ormlite", vec![0]),
                 ("callintransaction h2", vec![1, 3]),
                 ("callintransaction ormlite", vec![0, 1]),
                 ("and callintransaction", vec![1, 2]),
@@ -1422,9 +1472,8 @@ mod tests {
         // assert equal outcomes for different parsing modes [ormlite missing on indexing part]
         let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
             parse(q, &stopwords, &tr_map, ParseMode::Search);
-        let (_, _, mut i_ngrams_ids, i_words, _, i_must_have) =
+        let (_, _, i_ngrams_ids, i_words, _, i_must_have) =
             parse(q, &stopwords, &tr_map, ParseMode::Index);
-        i_ngrams_ids.insert("ormlite".to_string(), vec![0]);
         assert_eq!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
@@ -1440,14 +1489,40 @@ mod tests {
             vec![
                 ("first invent", vec![5, 3]),
                 ("bicycle first invent", vec![6, 5, 3]),
-                ("first to invent", vec![3, 4, 5]),
-                ("bicycle first to", vec![3, 4, 6]),
-                ("invent to", vec![5, 4]),
-                ("invent the was who", vec![0, 1, 2, 5]),
-                ("first to the was who", vec![0, 1, 2, 3, 4]),
-                ("bicycle first", vec![6, 3]),
+                ("bicycle invent to", vec![4, 5, 6]),
+                ("first the was who", vec![0, 1, 2, 3]),
+                ("invent to the was who", vec![0, 1, 2, 4, 5]),
+                ("first invent to", vec![3, 4, 5]),
+                ("invent to", vec![4, 5]),
+                ("invent", vec![5]),
+                ("bicycle first", vec![3, 6]),
                 ("bicycle the was who", vec![0, 1, 2, 6]),
-                ("bicycle invent", vec![5, 6]),
+                ("bicycle invent", vec![6, 5]),
+            ],
+        );
+
+        let q = "youngest person to walk on the moon";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![],
+            vec!["youngest", "person", "to", "walk", "on", "the", "moon"],
+            vec![
+                ("moon on the", vec![4, 5, 6]),
+                ("moon walk youngest", vec![6, 3, 0]),
+                ("moon on the to walk", vec![2, 3, 4, 5, 6]),
+                ("person youngest", vec![0, 1]),
+                ("to walk", vec![2, 3]),
+                ("to walk youngest", vec![0, 2, 3]),
+                ("moon on the person", vec![1, 4, 5, 6]),
+                ("moon on the youngest", vec![0, 4, 5, 6]),
+                ("person to walk", vec![1, 2, 3]),
+                ("on walk", vec![3, 4]),
+                ("walk youngest", vec![3, 0]),
+                ("moon walk", vec![6, 3]),
+                ("moon youngest", vec![6, 0]),
             ],
         );
     }
