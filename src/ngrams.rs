@@ -375,13 +375,33 @@ pub fn get_stop_ngrams(
                 let mut next_i = word_idx.pop().unwrap();
                 while next_i < j && !linked_idx.contains(&next_i) {
                     stop_ngrams.push((words[next_i].to_string(), rels[next_i], vec![next_i]));
+                    linked_idx.insert(next_i);
                     next_i = word_idx.pop().unwrap();
                 }
             }
 
             // only k is a stopword
             if !stop_idx_set.contains(&j) && stop_idx_set.contains(&k) {
-                if !linked_idx.contains(&j) {
+                // take k+1 if k is not the last word and tr(k+1) > tr(j)
+                if k < last_word_idx && !stop_idx_set.contains(&(k + 1)) && rels[k + 1] >= rels[j] {
+                    if !linked_idx.contains(&j) {
+                        linked_idx.insert(j);
+                        stop_ngrams.push((words[j].to_string(), rels[j], vec![j]));
+                    }
+
+                    skip_idx.insert(k);
+                    linked_idx.insert(k);
+                    linked_idx.insert(*i);
+
+                    skip_idx.insert(k + 1);
+                    linked_idx.insert(k + 1);
+
+                    stop_ngrams.push((
+                        bow3(&words[*i], &words[k], &words[k + 1]),
+                        rels[*i] + rels[k] + rels[k + 1],
+                        vec![*i, k, k + 1],
+                    ));
+                } else if k < last_word_idx && rels[j] > rels[k + 1] && !linked_idx.contains(&j) {
                     linked_idx.insert(*i);
                     linked_idx.insert(j);
                     stop_ngrams.push((
@@ -393,6 +413,7 @@ pub fn get_stop_ngrams(
                     skip_idx.insert(k);
                     linked_idx.insert(k);
                     linked_idx.insert(*i);
+
                     stop_ngrams.push((
                         bow2(&words[*i], &words[k]),
                         rels[*i] + rels[k],
@@ -418,7 +439,7 @@ pub fn get_stop_ngrams(
                         vec![*i, k],
                     ));
 
-                // take also k+1 if k is not the last word
+                // take also k+1 if it's not a stop word
                 } else {
                     skip_idx.insert(k + 1);
                     linked_idx.insert(k + 1);
@@ -431,9 +452,7 @@ pub fn get_stop_ngrams(
 
             // neither j, nor k are stopwords
             } else {
-                if (rels[j] <= rels[k] || words[j].len() >= 4 * words[k].len())
-                    && !linked_idx.contains(&j)
-                {
+                if words[j].len() >= 4 * words[k].len() && !linked_idx.contains(&j) {
                     linked_idx.insert(*i);
                     linked_idx.insert(j);
                     stop_ngrams.push((
@@ -613,14 +632,14 @@ pub fn parse(
     }
 
     // identify must have word
-    if words_vec[0].2 > 1.8 * word_thresh
+    if words_vec[0].2 > 1.85 * word_thresh
         || (words_len > 1 && words_vec[0].2 > 0.6)
         || (words_len > 2 && words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
     {
         must_have.push(words_vec[0].0);
     } else if words_len <= 5 {
-        if (words_len > 3 && words_vec[1].2 < 0.85 * words_vec[0].2)
-            || (words_len > 2 && words_vec[1].2 < 0.83 * words_vec[0].2)
+        if (words_len > 3 && words_vec[1].2 < 0.78 * words_vec[0].2)
+            || (words_len < 4 && words_vec[1].2 < 0.83 * words_vec[0].2)
         {
             for (word_idx, word, word_rel) in words_vec.iter() {
                 // skip serial numbers, dates, 's01' 's02' type of words,
@@ -870,7 +889,7 @@ mod tests {
         assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "welche 30 unternehmen sind im dax";
-        let e = vec!["30 welche", "sind unternehmen", "dax im"];
+        let e = vec!["30 welche", "unternehmen", "dax im sind"];
         assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "if the word is numeric it has to go into bigram";
@@ -929,7 +948,29 @@ mod tests {
         assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "who was the first to invent bicycle";
-        let e = vec!["the was who", "first to", "invent", "bicycle"];
+        let e = vec!["the was who", "first", "invent to", "bicycle"];
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
+            e
+        );
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
+            e
+        );
+
+        let q = "youngest person to walk on the moon";
+        let e = vec!["youngest", "person", "to walk", "moon on the"];
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
+            e
+        );
+        assert_eq!(
+            get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Search),
+            e
+        );
+
+        let q = "youngest person on the moon";
+        let e = vec!["youngest", "person", "moon on the"];
         assert_eq!(
             get_stop_ngrams_test(q, &tr_map, &stopwords, ParseMode::Index),
             e
@@ -1022,15 +1063,16 @@ mod tests {
             vec![2],
             vec!["list", "of", "literature", "genres", "txt"],
             vec![
-                ("genres list literature", vec![2, 3, 0]),
-                ("genres of", vec![3, 1]),
+                ("list literature of", vec![0, 1, 2]),
+                ("literature of", vec![1, 2]),
                 ("genres list", vec![3, 0]),
                 ("genres txt", vec![3, 4]),
+                ("genres txt list", vec![0, 3, 4]),
                 ("genres literature", vec![2, 3]),
                 ("list literature", vec![2, 0]),
-                ("genres txt literature", vec![2, 3, 4]),
-                ("list of literature", vec![0, 1, 2]),
-                ("genres txt list of", vec![0, 1, 3, 4]),
+                ("genres txt literature of", vec![1, 2, 3, 4]),
+                ("genres list literature", vec![2, 3, 0]),
+                ("genres of", vec![3, 1]),
                 ("genres", vec![3]),
             ],
         );
@@ -1156,16 +1198,16 @@ mod tests {
             vec![5],
             vec!["welche", "30", "unternehmen", "sind", "im", "dax"],
             vec![
-                ("dax im sind unternehmen", vec![2, 3, 4, 5]),
                 ("unternehmen welche", vec![2, 0]),
-                ("dax im", vec![4, 5]),
+                ("30 welche unternehmen", vec![0, 1, 2]),
+                ("30 dax", vec![5, 1]),
+                ("30 welche dax im sind", vec![0, 1, 3, 4, 5]),
+                ("dax im sind", vec![3, 4, 5]),
                 ("dax unternehmen", vec![5, 2]),
-                ("30 welche sind unternehmen", vec![0, 1, 2, 3]),
                 ("30 unternehmen", vec![2, 1]),
                 ("30 dax unternehmen", vec![5, 2, 1]),
-                ("30 welche dax im", vec![0, 1, 4, 5]),
+                ("dax im sind unternehmen", vec![2, 3, 4, 5]),
                 ("dax", vec![5]),
-                ("30 dax", vec![5, 1]),
             ],
         );
 
@@ -1198,19 +1240,21 @@ mod tests {
             vec![],
             vec!["fsck", "inode", "has", "imagic", "flag", "set"],
             vec![
-                ("flag has inode", vec![1, 2, 4]),
-                ("has inode imagic", vec![1, 2, 3]),
-                ("has inode set", vec![1, 2, 5]),
-                ("flag imagic", vec![3, 4]),
-                ("imagic set", vec![3, 5]),
-                ("fsck has inode", vec![0, 1, 2]),
-                ("fsck imagic inode", vec![3, 1, 0]),
+                ("fsck inode", vec![0, 1]),
                 ("flag fsck", vec![0, 4]),
-                ("fsck inode", vec![1, 0]),
+                // ("fsck imagic set", vec![2, 3, 5]),
+                ("has imagic", vec![2, 3]),
+                ("flag has imagic", vec![2, 3, 4]),
                 ("flag set", vec![4, 5]),
-                ("imagic inode", vec![3, 1]),
+                ("fsck has imagic", vec![0, 2, 3]),
+                ("fsck imagic inode", vec![3, 1, 0]),
+                ("has imagic set", vec![2, 3, 5]),
+                ("has imagic inode", vec![1, 2, 3]),
                 ("has inode", vec![1, 2]),
-                ("fsck imagic", vec![0, 3]),
+                ("imagic inode", vec![3, 1]),
+                ("flag inode", vec![1, 4]),
+                ("inode set", vec![1, 5]),
+                ("fsck imagic", vec![3, 0]),
             ],
         );
 
@@ -1223,13 +1267,14 @@ mod tests {
             vec![3],
             vec!["python", "programming", "to", "iota"],
             vec![
-                ("programming to python", vec![0, 1, 2]),
-                ("iota programming to", vec![1, 2, 3]),
-                ("iota programming", vec![3, 1]),
-                ("iota programming python", vec![3, 0, 1]),
+                ("iota to programming", vec![1, 2, 3]),
                 ("python to", vec![0, 2]),
+                ("iota to python", vec![0, 2, 3]),
+                ("iota to", vec![2, 3]),
+                ("iota python", vec![3, 0]),
+                ("iota programming python", vec![3, 0, 1]),
                 ("programming python", vec![0, 1]),
-                ("iota python", vec![0, 3]),
+                ("iota programming", vec![3, 1]),
                 ("iota", vec![3]),
             ],
         );
@@ -1462,15 +1507,60 @@ mod tests {
             vec![
                 ("first invent", vec![5, 3]),
                 ("bicycle first invent", vec![6, 5, 3]),
-                ("first to invent", vec![3, 4, 5]),
-                ("bicycle first to", vec![3, 4, 6]),
-                ("invent to", vec![5, 4]),
-                ("invent the was who", vec![0, 1, 2, 5]),
-                ("first to the was who", vec![0, 1, 2, 3, 4]),
-                ("bicycle first", vec![6, 3]),
-                ("bicycle the was who", vec![0, 1, 2, 6]),
-                ("bicycle invent", vec![5, 6]),
+                ("bicycle invent to", vec![4, 5, 6]),
+                ("first the was who", vec![0, 1, 2, 3]),
+                ("invent to the was who", vec![0, 1, 2, 4, 5]),
+                ("first invent to", vec![3, 4, 5]),
+                ("invent to", vec![4, 5]),
                 ("invent", vec![5]),
+                ("bicycle first", vec![3, 6]),
+                ("bicycle the was who", vec![0, 1, 2, 6]),
+                ("bicycle invent", vec![6, 5]),
+            ],
+        );
+
+        let q = "youngest person to walk on the moon";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![],
+            vec!["youngest", "person", "to", "walk", "on", "the", "moon"],
+            vec![
+                ("moon on the", vec![4, 5, 6]),
+                ("moon walk youngest", vec![6, 3, 0]),
+                ("moon on the to walk", vec![2, 3, 4, 5, 6]),
+                ("person youngest", vec![0, 1]),
+                ("to walk", vec![2, 3]),
+                ("to walk youngest", vec![0, 2, 3]),
+                ("moon on the person", vec![1, 4, 5, 6]),
+                ("moon on the youngest", vec![0, 4, 5, 6]),
+                ("person to walk", vec![1, 2, 3]),
+                ("on walk", vec![3, 4]),
+                ("walk youngest", vec![3, 0]),
+                ("moon walk", vec![6, 3]),
+                ("moon youngest", vec![6, 0]),
+            ],
+        );
+
+        let q = "youngest person on the moon";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![4],
+            vec!["youngest", "person", "on", "the", "moon"],
+            vec![
+                ("moon person youngest", vec![4, 0, 1]),
+                ("moon on the", vec![2, 3, 4]),
+                ("moon youngest", vec![4, 0]),
+                ("person youngest", vec![0, 1]),
+                ("on youngest", vec![0, 2]),
+                ("moon on the person", vec![1, 2, 3, 4]),
+                ("moon on the youngest", vec![0, 2, 3, 4]),
+                ("moon person", vec![4, 1]),
             ],
         );
     }

@@ -487,7 +487,7 @@ impl Qpick {
             .collect::<Vec<KeywordMatchResult>>();
         keyword_matches.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
 
-        let search_results: Vec<SearchResult> = keyword_matches
+        let mut search_results: Vec<SearchResult> = keyword_matches
             .into_iter()
             .take(util::max(count.unwrap_or(FETCH_MIN), FETCH_MIN))
             .map(|m| {
@@ -504,6 +504,7 @@ impl Qpick {
                 }
             })
             .collect();
+        search_results.truncate(count.unwrap_or(FETCH_MIN));
 
         Ok(search_results)
     }
