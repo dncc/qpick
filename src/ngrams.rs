@@ -5,7 +5,7 @@ use util;
 use regex::Regex;
 use std::borrow::Cow;
 
-const MISS_WORD_REL: u64 = 6666;
+pub const MISS_WORD_REL: u64 = 6666;
 pub const WORDS_PER_QUERY: usize = 15;
 
 const PUNCT_SYMBOLS: &str = "[/@#!,'?:();.+-]";
@@ -533,7 +533,6 @@ pub fn get_stop_ngrams(
                 while next_i < j && !linked_idx.contains(&next_i) && !word_idx.is_empty() {
                     stop_ngrams.update(&words, &rels, vec![next_i], &synonyms);
                     linked_idx.insert(next_i);
-                    next_i = word_idx.pop().unwrap();
                 }
             }
 
