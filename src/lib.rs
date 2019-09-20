@@ -576,8 +576,13 @@ impl<'a> Qpick<'a> {
                     .map(|i2q| i2q[*sh_qid as usize].to_string())
                     .unwrap_or(String::from(""));
 
-                let cosine_dist =
-                    self.cosine_diff_distance(&words_set, &words, &mquery, &m.missing_words);
+                let cosine_dist = self.cosine_diff_distance(
+                    &words_set,
+                    &words,
+                    &mquery,
+                    &m.missing_words,
+                    m.dist,
+                );
 
                 let dist = Distance {
                     query_id: m.query_id,
@@ -605,6 +610,7 @@ impl<'a> Qpick<'a> {
         words: &Vec<String>,
         cand_query: &str,
         missing_words: &Vec<usize>,
+        keyword_dist: f32,
     ) -> Option<f32> {
         if self.word_vecs.is_none() {
             return None;
@@ -633,12 +639,17 @@ impl<'a> Qpick<'a> {
             .iter()
             .map(|i| words[*i].to_string())
             .collect::<Vec<String>>();
+        let missing_len = missing_words.len();
 
         let excess_words = cand_words
             .difference(&words_set)
             .map(|w| w.to_string())
             .collect::<Vec<String>>();
+        let excess_len = excess_words.len();
 
+        // println!("miss {:?}", missing_words);
+        // println!("excs {:?}", excess_words);
+        // println!(" --- ");
         if missing_words.is_empty() && excess_words.is_empty() {
             return Some(0.0);
         }
@@ -670,38 +681,50 @@ impl<'a> Qpick<'a> {
 
         // there are at least some match words at this point
 
-        // avoid NaN
-        // if (not found match words or match words are empty) AND
-        //    ((not found excess or excess words are empty) OR
-        //     (not found missing or missing words are empty))
-        if nf_match == match_words.len()
-            && (nf_miss == missing_words.len() || nf_excs == excess_words.len())
-        {
+        // if both, missing AND excess words are not found, we can't calculate cosine
+        if nf_miss == missing_len && nf_excs == excess_len {
             return None;
+        }
+
+        // if no missing words, cosine dist
+        if nf_miss == missing_len {
+            return self.cosine_distance(words, &cand_words);
+        }
+
+        if nf_excs == excess_len {
+            if let Some(cos_dist) = self.cosine_distance(words, &cand_words) {
+                if match_len > 2 && keyword_dist < 0.3 {
+                    return Some(1.0 / match_len as f32 * cos_dist);
+                }
+            }
         }
 
         let mut lhs_match_vec = rhs_match_vec.clone();
 
-        if !missing_words.is_empty() {
+        if missing_len > 0 {
             word_vec::subtract(&mut lhs_match_vec, &missing_vec);
         }
 
-        if !excess_words.is_empty() {
+        if excess_len > 0 {
             word_vec::subtract(&mut rhs_match_vec, &excess_vec);
         }
 
         word_vec::normalize(&mut lhs_match_vec[..]);
         word_vec::normalize(&mut rhs_match_vec[..]);
 
-        Some(
-            1.0 - util::max(
-                0.0,
-                util::min(
-                    word_vec::UPPER_COS_BOUND,
-                    word_vec::dot(&rhs_match_vec, &lhs_match_vec),
-                ),
-            ),
-        )
+        let cos_dist = word_vec::cosine_distance(&lhs_match_vec, &rhs_match_vec);
+
+        // only one missing and excess word and keyword distance is too large
+        if excess_len == 1 && missing_len == 1 && match_len > 1 && keyword_dist > 0.4 {
+            return Some(1.25 * cos_dist);
+        }
+
+        // more than one excess, at least one missing and keyword distance is not so big
+        if excess_len > 1 && missing_len == 1 && match_len > 1 && keyword_dist < 0.6 {
+            return Some(0.75 * cos_dist);
+        }
+
+        Some(cos_dist)
     }
 
     #[inline]
@@ -731,16 +754,10 @@ impl<'a> Qpick<'a> {
             return None;
         }
 
-        word_vec::normalize(&mut match_words_vec[..]);
-        Some(
-            1.0 - util::max(
-                0.0,
-                util::min(
-                    word_vec::UPPER_COS_BOUND,
-                    word_vec::dot(&orig_words_vec, &match_words_vec),
-                ),
-            ),
-        )
+        word_vec::normalize(&mut query_vec[..]);
+        word_vec::normalize(&mut cand_vec[..]);
+
+        Some(word_vec::cosine_distance(&query_vec, &cand_vec))
     }
 
     pub fn get_distances(&self, query: &str, candidates: &Vec<String>) -> Vec<DistanceResult> {
@@ -797,8 +814,13 @@ impl<'a> Qpick<'a> {
                 .map(|(i, _)| i)
                 .collect::<Vec<usize>>();
 
-            let cosine_dist =
-                self.cosine_diff_distance(&words_set, &words, &cand_query, &missing_words);
+            let cosine_dist = self.cosine_diff_distance(
+                &words_set,
+                &words,
+                &cand_query,
+                &missing_words,
+                keyword_dist,
+            );
 
             dist_results.push(DistanceResult {
                 query: cand_query.to_string(),

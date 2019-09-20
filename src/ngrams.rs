@@ -533,6 +533,7 @@ pub fn get_stop_ngrams(
                 while next_i < j && !linked_idx.contains(&next_i) && !word_idx.is_empty() {
                     stop_ngrams.update(&words, &rels, vec![next_i], &synonyms);
                     linked_idx.insert(next_i);
+                    next_i = word_idx.pop().unwrap();
                 }
             }
 
@@ -1776,7 +1777,7 @@ mod tests {
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![],
+            vec![0],
             vec!["calypso", "k5177"],
             vec![
                 ("calypso", vec![0]),

@@ -1,10 +1,13 @@
 use byteorder::{ByteOrder, LittleEndian};
-use fnv::FnvHashMap;
+use fnv::{FnvHashMap, FnvHashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 use blas;
+
+use ngrams::MISS_WORD_REL;
 use std::mem::MaybeUninit;
+use util;
 
 pub const DIM: usize = 201; // TODO in the config!
 pub const UPPER_COS_BOUND: f32 = 1.0;
@@ -20,6 +23,11 @@ pub fn normalize(v: &mut [f32]) {
 #[inline]
 pub fn dot(v: &[f32], u: &[f32]) -> f32 {
     unsafe { blas::sdot(DIM as i32, v, 1, u, 1) }
+}
+
+#[inline]
+pub fn cosine_distance(u: &Vec<f32>, v: &Vec<f32>) -> f32 {
+    1.0 - util::max(0.0, util::min(UPPER_COS_BOUND, dot(&u, &v)))
 }
 
 #[inline]
@@ -50,15 +58,43 @@ impl WordDict {
     }
 
     #[inline]
+    pub fn get_word_rel(
+        self: &Self,
+        word: &str,
+        words_relevances: &fst::Map,
+        stopwords: &FnvHashSet<String>,
+    ) -> f32 {
+        let word_rel: f32 = words_relevances.get(word).unwrap_or(MISS_WORD_REL) as f32;
+
+        if stopwords.contains(word) || word.len() == 1 {
+            return 0.25 * word_rel;
+        }
+
+        word_rel
+    }
+
+    #[inline]
     pub fn get_word_id(self: &Self, word: &str) -> Option<&usize> {
         self.word_to_id.get(word)
     }
 
     #[inline]
-    pub fn get_words_ids(self: &Self, words: &Vec<String>) -> Vec<usize> {
+    pub fn get_words_ids(
+        self: &Self,
+        words: &Vec<String>,
+        words_relevances: &fst::Map,
+        stopwords: &FnvHashSet<String>,
+    ) -> Vec<(usize, f32)> {
         words
             .iter()
-            .filter_map(|w| self.word_to_id.get(w).cloned())
+            .filter_map(|w| match self.word_to_id.get(w) {
+                Some(word_id) => {
+                    let word_rel = self.get_word_rel(w, words_relevances, stopwords);
+
+                    Some((*word_id, word_rel))
+                }
+                None => None,
+            })
             .collect()
     }
 
@@ -130,23 +166,38 @@ impl<'a> WordVecs<'a> {
     }
 
     #[inline]
-    pub fn get_combined_vec(self: &Self, words: &Vec<String>) -> (Vec<f32>, usize) {
-        let word_ids = self.word_dict.get_words_ids(words);
+    pub fn get_combined_vec(
+        self: &Self,
+        words: &Vec<String>,
+        words_relevances: &fst::Map,
+        stopwords: &FnvHashSet<String>,
+    ) -> (Vec<f32>, usize) {
+        let word_ids_rels = self
+            .word_dict
+            .get_words_ids(words, words_relevances, stopwords);
 
-        let not_found = words.len() - word_ids.len();
-        (
-            word_ids
-                .iter()
-                .enumerate()
-                .fold([0.0; DIM], |mut data, (j, i)| {
-                    let WordVec(ref v) = self.word_vecs[*i];
-                    unsafe { blas::saxpy(DIM as i32, 1f32, v, 1, &mut data, 1) }
+        // let mult: bool = word_ids_rels.len() > 1;
+        let not_found = words.len() - word_ids_rels.len();
+        let words_vec = word_ids_rels
+            .iter()
+            .fold([0.0; DIM], |mut data, (i, word_rel)| {
+                let WordVec(ref v) = self.word_vecs[*i];
+                unsafe {
+                    blas::saxpy(
+                        DIM as i32, // if mult { *word_rel } else { 1f32 },
+                        *word_rel, v, 1, &mut data, 1,
+                    )
+                }
 
-                    data
-                })
-                .to_vec(),
-            not_found,
-        )
+                data
+            })
+            .to_vec();
+
+        // if mult {
+        // normalize(&mut words_vec);
+        // }
+
+        (words_vec, not_found)
     }
 
     #[inline]
