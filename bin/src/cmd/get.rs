@@ -52,7 +52,8 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
 
     let r = qpick.get(&args.arg_query, args.arg_count, !args.flag_without_tfidf);
 
-    let v: Vec<(u64, f32, String)> = r.iter()
+    let v: Vec<(u64, f32, String)> = r
+        .iter()
         .map(|r| {
             let q = if let Some(ref query) = r.query {
                 query

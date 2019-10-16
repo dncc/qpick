@@ -35,7 +35,7 @@ macro_rules! bow2 {
     }};
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ParseMode {
     Index,
     Search,
@@ -77,16 +77,8 @@ fn update(
     ngram: String,
     relev: f32,
     indices: Vec<usize>,
-    synonyms: &FnvHashMap<usize, String>,
 ) {
     if !ngrams_ids.contains_key(&ngram) {
-        if indices.len() == 1 && !synonyms.is_empty() {
-            if let Some(synonym) = synonyms.get(&indices[0]) {
-                relevs.push(relev);
-                ngrams.push(synonym.to_string());
-                ngrams_ids.insert(synonym.to_string(), indices.clone());
-            }
-        }
         relevs.push(relev);
         ngrams.push(ngram.clone());
         ngrams_ids.insert(ngram.clone(), indices);
@@ -192,8 +184,8 @@ fn suffix_words(words: &mut Vec<String>, suffix_letters: &mut Vec<(usize, String
 fn suffix_synonyms(
     words: &Vec<String>,
     suffix_letters: &mut Vec<(usize, String)>,
-) -> FnvHashMap<usize, String> {
-    let mut suffix_synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
+    synonyms: &mut FnvHashMap<usize, String>,
+) {
     for (word_idx, word) in words.iter().enumerate() {
         let mut synonym = String::with_capacity(word.len() + suffix_letters.len());
         synonym.push_str(word);
@@ -206,15 +198,35 @@ fn suffix_synonyms(
             }
         }
         if word.len() < synonym.len() {
-            suffix_synonyms.insert(word_idx, synonym);
+            synonyms.insert(word_idx, synonym);
         }
     }
-
-    suffix_synonyms
 }
 
 #[inline]
-fn get_norm_query_vec(query: &str, mode: ParseMode) -> (Vec<String>, FnvHashMap<usize, String>) {
+fn word_synonyms(
+    words: &Vec<String>,
+    synonyms: &mut FnvHashMap<usize, String>,
+    synonyms_dict: &Option<FnvHashMap<String, String>>,
+) {
+    if let Some(syn_dict) = synonyms_dict {
+        for (word_idx, word) in words.iter().enumerate() {
+            // TODO check if synonym is not already in query words
+            if !synonyms.contains_key(&word_idx) {
+                if let Some(syn) = syn_dict.get(word) {
+                    synonyms.insert(word_idx, syn.to_string());
+                }
+            }
+        }
+    }
+}
+
+#[inline]
+fn get_norm_query_vec(
+    query: &str,
+    synonyms_dict: &Option<FnvHashMap<String, String>>,
+    mode: ParseMode,
+) -> (Vec<String>, FnvHashMap<usize, String>) {
     let mut suffix_letters: Vec<(usize, String)> = Vec::with_capacity(WORDS_PER_QUERY - 1);
     let mut synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
 
@@ -258,7 +270,8 @@ fn get_norm_query_vec(query: &str, mode: ParseMode) -> (Vec<String>, FnvHashMap<
     if (words.len() > 2 || !suffix_letters.is_empty()) && words.iter().all(|w| w.len() <= 4) {
         words = suffix_words(&mut words, &mut suffix_letters);
     } else if mode == ParseMode::Search {
-        synonyms = suffix_synonyms(&mut words, &mut suffix_letters);
+        suffix_synonyms(&mut words, &mut suffix_letters, &mut synonyms);
+        word_synonyms(&mut words, &mut synonyms, &synonyms_dict);
     }
 
     (words, synonyms)
@@ -271,7 +284,7 @@ pub fn get_words_relevances(
     stopwords: &FnvHashSet<String>,
     mode: ParseMode,
 ) -> FnvHashMap<String, f32> {
-    let (words, _) = get_norm_query_vec(query, mode);
+    let (words, _) = get_norm_query_vec(query, &None, mode);
     let (_, _, relevs) = index_words(&words, tr_map, stopwords);
 
     words
@@ -323,15 +336,163 @@ pub fn index_words(
     (word_vec, stop_vec, rels)
 }
 
+#[derive(Debug)]
+pub struct StopNgram {
+    pub ngram: String,
+    pub relev: f32,
+    pub word_indices: Vec<usize>,
+}
+
+impl StopNgram {
+    #[inline]
+    pub fn new(ngram: String, relev: f32, word_indices: Vec<usize>) -> Self {
+        StopNgram {
+            ngram: ngram,
+            relev: relev,
+            word_indices: word_indices,
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.word_indices.len()
+    }
+}
+
+#[derive(Debug)]
+pub struct StopNgrams {
+    ngrams: Vec<StopNgram>,
+    synonyms: FnvHashMap<usize, Vec<StopNgram>>,
+    mode: ParseMode,
+}
+
+use std::ops::Index;
+use std::str;
+impl Index<usize> for StopNgrams {
+    type Output = StopNgram;
+
+    #[inline]
+    fn index(&self, idx: usize) -> &StopNgram {
+        &self.ngrams[idx]
+    }
+}
+
+impl StopNgrams {
+    pub fn with_capacity(capacity: usize, mode: ParseMode) -> Self {
+        StopNgrams {
+            ngrams: Vec::with_capacity(capacity),
+            synonyms: FnvHashMap::default(),
+            mode: mode,
+        }
+    }
+
+    #[inline]
+    pub fn update(
+        &mut self,
+        words: &Vec<String>,
+        rels: &Vec<f32>,
+        indices: Vec<usize>,
+        synonyms: &FnvHashMap<usize, String>,
+    ) {
+        let ngram_idx = self.ngrams.len();
+
+        if indices.len() == 3 {
+            let (i, j, k) = (indices[0], indices[1], indices[2]);
+
+            if self.mode == ParseMode::Search {
+                if let Some(syn) = synonyms.get(&i) {
+                    let ngram_syns = self.synonyms.entry(ngram_idx).or_insert(vec![]);
+                    ngram_syns.push(StopNgram::new(
+                        bow3(&syn, &words[j], &words[k]),
+                        rels[i] + rels[j] + rels[k],
+                        indices.clone(),
+                    ));
+                };
+
+                if let Some(syn) = synonyms.get(&j) {
+                    let ngram_syns = self.synonyms.entry(ngram_idx).or_insert(vec![]);
+                    ngram_syns.push(StopNgram::new(
+                        bow3(&words[i], &syn, &words[k]),
+                        rels[i] + rels[j] + rels[k],
+                        indices.clone(),
+                    ));
+                };
+
+                if let Some(syn) = synonyms.get(&k) {
+                    let ngram_syns = self.synonyms.entry(ngram_idx).or_insert(vec![]);
+                    ngram_syns.push(StopNgram::new(
+                        bow3(&words[i], &words[j], &syn),
+                        rels[i] + rels[j] + rels[k],
+                        indices.clone(),
+                    ));
+                };
+            }
+
+            self.ngrams.push(StopNgram::new(
+                bow3(&words[i], &words[j], &words[k]),
+                rels[i] + rels[j] + rels[k],
+                indices,
+            ));
+        } else if indices.len() == 2 {
+            let (i, j) = (indices[0], indices[1]);
+
+            if self.mode == ParseMode::Search {
+                if let Some(syn) = synonyms.get(&i) {
+                    let ngram_syns = self.synonyms.entry(ngram_idx).or_insert(vec![]);
+                    ngram_syns.push(StopNgram::new(
+                        bow2(&syn, &words[j]),
+                        rels[i] + rels[j],
+                        indices.clone(),
+                    ));
+                };
+
+                if let Some(syn) = synonyms.get(&j) {
+                    let ngram_syns = self.synonyms.entry(ngram_idx).or_insert(vec![]);
+                    ngram_syns.push(StopNgram::new(
+                        bow2(&words[i], &syn),
+                        rels[i] + rels[j],
+                        indices.clone(),
+                    ));
+                };
+            };
+
+            self.ngrams.push(StopNgram::new(
+                bow2(&words[i], &words[j]),
+                rels[i] + rels[j],
+                indices,
+            ));
+        } else if indices.len() == 1 {
+            let i = indices[0];
+
+            if self.mode == ParseMode::Search {
+                if let Some(syn) = synonyms.get(&i) {
+                    let ngram_syns = self.synonyms.entry(ngram_idx).or_insert(vec![]);
+                    ngram_syns.push(StopNgram::new(syn.to_string(), rels[i], indices.clone()));
+                };
+            };
+
+            self.ngrams
+                .push(StopNgram::new(words[i].to_string(), rels[i], indices));
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.ngrams.len()
+    }
+}
+
 #[inline]
 pub fn get_stop_ngrams(
     words: &Vec<String>,
     rels: &Vec<f32>,
     word_idx: &mut Vec<usize>,
     stop_idx: &Vec<usize>,
-) -> Vec<(String, f32, Vec<usize>)> {
+    synonyms: &FnvHashMap<usize, String>,
+    mode: ParseMode,
+) -> StopNgrams {
     let words_len = words.len();
-    let mut stop_ngrams: Vec<(String, f32, Vec<usize>)> = Vec::with_capacity(words_len);
+    let mut stop_ngrams: StopNgrams = StopNgrams::with_capacity(words_len, mode);
     let last_word_idx = words_len - 1;
 
     word_idx.reverse();
@@ -352,17 +513,13 @@ pub fn get_stop_ngrams(
             linked_idx.insert(*i);
             linked_idx.insert(j);
             if !stop_idx_set.contains(&j) || j == last_word_idx {
-                stop_ngrams.push((bow2(&words[*i], &words[j]), rels[*i] + rels[j], vec![*i, j]));
+                stop_ngrams.update(&words, &rels, vec![*i, j], &synonyms);
             } else {
                 linked_idx.insert(j + 1);
                 if stop_idx_set.contains(&(j + 1)) {
                     skip_idx.insert(j + 1);
                 }
-                stop_ngrams.push((
-                    bow3(&words[*i], &words[j], &words[j + 1]),
-                    rels[*i] + rels[j] + rels[j + 1],
-                    vec![*i, j, j + 1],
-                ));
+                stop_ngrams.update(&words, &rels, vec![*i, j, j + 1], &synonyms);
             }
 
         // stopword in between
@@ -373,8 +530,8 @@ pub fn get_stop_ngrams(
             // push all single-no-stop words
             if !word_idx.is_empty() {
                 let mut next_i = word_idx.pop().unwrap();
-                while next_i < j && !linked_idx.contains(&next_i) {
-                    stop_ngrams.push((words[next_i].to_string(), rels[next_i], vec![next_i]));
+                while next_i < j && !linked_idx.contains(&next_i) && !word_idx.is_empty() {
+                    stop_ngrams.update(&words, &rels, vec![next_i], &synonyms);
                     linked_idx.insert(next_i);
                     next_i = word_idx.pop().unwrap();
                 }
@@ -386,7 +543,7 @@ pub fn get_stop_ngrams(
                 if k < last_word_idx && !stop_idx_set.contains(&(k + 1)) && rels[k + 1] >= rels[j] {
                     if !linked_idx.contains(&j) {
                         linked_idx.insert(j);
-                        stop_ngrams.push((words[j].to_string(), rels[j], vec![j]));
+                        stop_ngrams.update(&words, &rels, vec![j], &synonyms);
                     }
 
                     skip_idx.insert(k);
@@ -396,36 +553,25 @@ pub fn get_stop_ngrams(
                     skip_idx.insert(k + 1);
                     linked_idx.insert(k + 1);
 
-                    stop_ngrams.push((
-                        bow3(&words[*i], &words[k], &words[k + 1]),
-                        rels[*i] + rels[k] + rels[k + 1],
-                        vec![*i, k, k + 1],
-                    ));
+                    stop_ngrams.update(&words, &rels, vec![*i, k, k + 1], &synonyms);
                 } else if k < last_word_idx && rels[j] > rels[k + 1] && !linked_idx.contains(&j) {
                     linked_idx.insert(*i);
                     linked_idx.insert(j);
-                    stop_ngrams.push((
-                        bow2(&words[j], &words[*i]),
-                        rels[j] + rels[*i],
-                        vec![j, *i],
-                    ));
+                    stop_ngrams.update(&words, &rels, vec![j, *i], &synonyms);
                 } else {
                     skip_idx.insert(k);
                     linked_idx.insert(k);
                     linked_idx.insert(*i);
 
-                    stop_ngrams.push((
-                        bow2(&words[*i], &words[k]),
-                        rels[*i] + rels[k],
-                        vec![*i, k],
-                    ));
+                    stop_ngrams.update(&words, &rels, vec![*i, k], &synonyms);
                 }
 
             // only j is a stopword
             } else if stop_idx_set.contains(&j) && !stop_idx_set.contains(&k) {
                 linked_idx.insert(k);
                 linked_idx.insert(*i);
-                stop_ngrams.push((bow2(&words[*i], &words[k]), rels[*i] + rels[k], vec![*i, k]));
+
+                stop_ngrams.update(&words, &rels, vec![*i, k], &synonyms);
 
             // both j & k are stopwords, since j is linked, take k
             } else if stop_idx_set.contains(&j) && stop_idx_set.contains(&k) {
@@ -433,21 +579,13 @@ pub fn get_stop_ngrams(
                 linked_idx.insert(k);
                 linked_idx.insert(*i);
                 if k == last_word_idx || stop_idx_set.contains(&(k + 1)) {
-                    stop_ngrams.push((
-                        bow2(&words[*i], &words[k]),
-                        rels[*i] + rels[k],
-                        vec![*i, k],
-                    ));
+                    stop_ngrams.update(&words, &rels, vec![*i, k], &synonyms);
 
                 // take also k+1 if it's not a stop word
                 } else {
                     skip_idx.insert(k + 1);
                     linked_idx.insert(k + 1);
-                    stop_ngrams.push((
-                        bow3(&words[*i], &words[k], &words[k + 1]),
-                        rels[*i] + rels[k] + rels[k + 1],
-                        vec![*i, k, k + 1],
-                    ));
+                    stop_ngrams.update(&words, &rels, vec![*i, k, k + 1], &synonyms);
                 }
 
             // neither j, nor k are stopwords
@@ -455,23 +593,15 @@ pub fn get_stop_ngrams(
                 if words[j].len() >= 4 * words[k].len() && !linked_idx.contains(&j) {
                     linked_idx.insert(*i);
                     linked_idx.insert(j);
-                    stop_ngrams.push((
-                        bow2(&words[j], &words[*i]),
-                        rels[j] + rels[*i],
-                        vec![j, *i],
-                    ));
+                    stop_ngrams.update(&words, &rels, vec![j, *i], &synonyms);
                 } else {
                     linked_idx.insert(k);
                     linked_idx.insert(*i);
                     if !linked_idx.contains(&j) {
-                        stop_ngrams.push((words[j].to_string(), rels[j], vec![j]));
+                        stop_ngrams.update(&words, &rels, vec![j], &synonyms);
                         linked_idx.insert(j);
                     }
-                    stop_ngrams.push((
-                        bow2(&words[*i], &words[k]),
-                        rels[*i] + rels[k],
-                        vec![*i, k],
-                    ));
+                    stop_ngrams.update(&words, &rels, vec![*i, k], &synonyms);
                 }
             }
 
@@ -481,8 +611,9 @@ pub fn get_stop_ngrams(
             // push all single-no-stop words, TODO macro
             if !word_idx.is_empty() {
                 let mut next_i = word_idx.pop().unwrap();
-                while next_i < j && !linked_idx.contains(&next_i) {
-                    stop_ngrams.push((words[next_i].to_string(), rels[next_i], vec![next_i]));
+                while next_i < j && !linked_idx.contains(&next_i) && !word_idx.is_empty() {
+                    stop_ngrams.update(&words, &rels, vec![next_i], &synonyms);
+                    linked_idx.insert(next_i);
                     next_i = word_idx.pop().unwrap();
                 }
             }
@@ -490,22 +621,25 @@ pub fn get_stop_ngrams(
             if !linked_idx.contains(&j) {
                 linked_idx.insert(*i);
                 linked_idx.insert(j);
-                stop_ngrams.push((bow2(&words[j], &words[*i]), rels[j] + rels[*i], vec![j, *i]));
+                stop_ngrams.update(&words, &rels, vec![j, *i], &synonyms);
 
             // previous word is in ngram, add this word to it and exit
             } else {
                 linked_idx.insert(*i);
-                let (ngram, mut ngram_rel, mut ngram_idx) = stop_ngrams.pop().unwrap();
-                ngram_rel += rels[*i];
-                ngram_idx.push(*i);
-                stop_ngrams.push((bow2(&ngram, &words[*i]), ngram_rel, ngram_idx));
+
+                let mut stop_ngram = stop_ngrams.ngrams.pop().unwrap();
+                stop_ngram.ngram = bow2(&stop_ngram.ngram, &words[*i]);
+                stop_ngram.relev += rels[*i];
+                stop_ngram.word_indices.push(*i);
+
+                stop_ngrams.ngrams.push(stop_ngram);
             }
         }
     }
 
     while let Some(next_i) = word_idx.pop() {
         if !linked_idx.contains(&next_i) {
-            stop_ngrams.push((words[next_i].to_string(), rels[next_i], vec![next_i]));
+            stop_ngrams.update(&words, &rels, vec![next_i], &synonyms);
         }
     }
 
@@ -517,6 +651,7 @@ use std::cmp::{Ordering, PartialOrd};
 #[inline]
 pub fn parse(
     query: &str,
+    synonyms: &Option<FnvHashMap<String, String>>,
     stopwords: &FnvHashSet<String>,
     tr_map: &fst::Map,
     mode: ParseMode,
@@ -533,7 +668,7 @@ pub fn parse(
     let mut ngrams_ids: FnvHashMap<String, Vec<usize>> = FnvHashMap::default();
     let mut must_have: Vec<usize> = Vec::with_capacity(2);
 
-    let (words, synonyms) = get_norm_query_vec(query, mode);
+    let (words, synonyms) = get_norm_query_vec(query, synonyms, mode);
     if words.is_empty() {
         return (ngrams, ngrams_relevs, ngrams_ids, words, vec![], vec![]);
     }
@@ -547,13 +682,19 @@ pub fn parse(
             words[0].clone(),
             1.0,
             vec![0],
-            &synonyms,
         );
         return (ngrams, ngrams_relevs, ngrams_ids, words, vec![1.0], vec![0]);
     }
 
     let (mut word_idx, stop_idx, words_relevs) = index_words(&words, tr_map, stopwords);
-    let stop_ngrams = get_stop_ngrams(&words, &words_relevs, &mut word_idx, &stop_idx);
+    let stop_ngrams = get_stop_ngrams(
+        &words,
+        &words_relevs,
+        &mut word_idx,
+        &stop_idx,
+        &synonyms,
+        mode,
+    );
 
     let stop_ngrams_len = stop_ngrams.len();
     let word_thresh = 1.0 / util::max(2.0, words_len as f32 - 1.0);
@@ -570,28 +711,40 @@ pub fn parse(
     //  a b c d e f-> [ab, ac, ad, ..., bc, bd, ..., ef]
     let ngram_thresh = 1.8 / words_len as f32;
     for i in 0..stop_ngrams_len {
-        if stop_ngrams[i].2.len() > 1 && stop_ngrams[i].1 > ngram_thresh {
+        if stop_ngrams[i].len() > 1 && stop_ngrams[i].relev > ngram_thresh {
             update(
                 &mut ngrams,
                 &mut ngrams_relevs,
                 &mut ngrams_ids,
-                stop_ngrams[i].0.clone(),
-                stop_ngrams[i].1,
-                stop_ngrams[i].2.clone(),
-                &synonyms,
+                stop_ngrams[i].ngram.clone(),
+                stop_ngrams[i].relev,
+                stop_ngrams[i].word_indices.clone(),
             );
+
+            if let Some(syn_ngrams) = stop_ngrams.synonyms.get(&i) {
+                for syn_ngram in syn_ngrams.iter() {
+                    update(
+                        &mut ngrams,
+                        &mut ngrams_relevs,
+                        &mut ngrams_ids,
+                        syn_ngram.ngram.clone(),
+                        syn_ngram.relev,
+                        syn_ngram.word_indices.clone(),
+                    );
+                }
+            }
         }
 
         for j in i + 1..stop_ngrams_len {
             let step = j - i - 1;
-            let ntr = (1.0 - step as f32 / 100.0) * (stop_ngrams[i].1 + stop_ngrams[j].1);
+            let ntr = (1.0 - step as f32 / 100.0) * (stop_ngrams[i].relev + stop_ngrams[j].relev);
             if step < 3 || ntr >= ngram_thresh {
-                let ngram = bow2(&stop_ngrams[i].0, &stop_ngrams[j].0);
+                let ngram = bow2(&stop_ngrams[i].ngram, &stop_ngrams[j].ngram);
                 if ngrams_ids.contains_key(&ngram) {
                     continue;
                 }
-                let mut ngram_ids_vec = stop_ngrams[i].2.clone();
-                ngram_ids_vec.extend(stop_ngrams[j].2.clone());
+                let mut ngram_ids_vec = stop_ngrams[i].word_indices.clone();
+                ngram_ids_vec.extend(stop_ngrams[j].word_indices.clone());
                 update(
                     &mut ngrams,
                     &mut ngrams_relevs,
@@ -599,8 +752,47 @@ pub fn parse(
                     ngram,
                     ntr,
                     ngram_ids_vec,
-                    &synonyms,
                 );
+
+                if let Some(syn_ngrams) = stop_ngrams.synonyms.get(&i) {
+                    for syn_ngram in syn_ngrams.iter() {
+                        let ngram = bow2(&syn_ngram.ngram, &stop_ngrams[j].ngram);
+                        if ngrams_ids.contains_key(&ngram) {
+                            continue;
+                        }
+                        let mut ngram_ids_vec = syn_ngram.word_indices.clone();
+                        ngram_ids_vec.extend(stop_ngrams[j].word_indices.clone());
+
+                        update(
+                            &mut ngrams,
+                            &mut ngrams_relevs,
+                            &mut ngrams_ids,
+                            ngram.clone(),
+                            ntr,
+                            ngram_ids_vec,
+                        );
+                    }
+                }
+
+                if let Some(syn_ngrams) = stop_ngrams.synonyms.get(&j) {
+                    for syn_ngram in syn_ngrams.iter() {
+                        let ngram = bow2(&stop_ngrams[i].ngram, &syn_ngram.ngram);
+                        if ngrams_ids.contains_key(&ngram) {
+                            continue;
+                        }
+                        let mut ngram_ids_vec = syn_ngram.word_indices.clone();
+                        ngram_ids_vec.extend(stop_ngrams[i].word_indices.clone());
+
+                        update(
+                            &mut ngrams,
+                            &mut ngrams_relevs,
+                            &mut ngrams_ids,
+                            ngram.clone(),
+                            ntr,
+                            ngram_ids_vec,
+                        );
+                    }
+                }
             }
         }
     }
@@ -614,8 +806,21 @@ pub fn parse(
             words_vec[0].1.clone(),
             words_vec[0].2,
             vec![words_vec[0].0],
-            &synonyms,
         );
+
+        // unigram synonyms
+        if mode == ParseMode::Search {
+            if let Some(syn) = synonyms.get(&words_vec[0].0) {
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
+                    syn.clone(),
+                    words_vec[0].2,
+                    vec![words_vec[0].0],
+                );
+            };
+        };
     }
 
     // insert 2nd most relevant word
@@ -627,8 +832,21 @@ pub fn parse(
             words_vec[1].1.clone(),
             words_vec[1].2,
             vec![words_vec[1].0],
-            &synonyms,
         );
+
+        // unigram synonyms
+        if mode == ParseMode::Search {
+            if let Some(syn) = synonyms.get(&words_vec[1].0) {
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
+                    syn.clone(),
+                    words_vec[1].2,
+                    vec![words_vec[1].0],
+                );
+            };
+        };
     }
 
     // identify must have word
@@ -647,6 +865,7 @@ pub fn parse(
                 if word.chars().any(char::is_numeric) {
                     continue;
                 }
+
                 must_have.push(*word_idx);
                 if words_len < 5 && mode == ParseMode::Search {
                     update(
@@ -656,9 +875,23 @@ pub fn parse(
                         word.clone(),
                         *word_rel,
                         vec![*word_idx],
-                        &synonyms,
                     );
+
+                    // unigram synonyms
+                    if mode == ParseMode::Search {
+                        if let Some(syn) = synonyms.get(word_idx) {
+                            update(
+                                &mut ngrams,
+                                &mut ngrams_relevs,
+                                &mut ngrams_ids,
+                                syn.clone(),
+                                words_vec[*word_idx].2,
+                                vec![words_vec[*word_idx].0],
+                            );
+                        };
+                    };
                 }
+
                 break;
             }
         }
@@ -677,7 +910,6 @@ pub fn parse(
             ),
             words_vec[0].2 + words_vec[1].2 + words_vec[2].2,
             vec![words_vec[0].0, words_vec[1].0, words_vec[2].0],
-            &synonyms,
         );
 
         if let Some(last) = words_vec.pop() {
@@ -691,7 +923,6 @@ pub fn parse(
                     bow2(&words_vec[0].1.clone(), &last.1.clone()),
                     words_vec[0].2 + last.2,
                     vec![words_vec[0].0, last.0],
-                    &synonyms,
                 );
             } else {
                 update(
@@ -701,7 +932,6 @@ pub fn parse(
                     bow2(&words_vec[1].1, &last.1.clone()),
                     words_vec[1].2 + last.2,
                     vec![words_vec[1].0, last.0],
-                    &synonyms,
                 );
                 update(
                     &mut ngrams,
@@ -710,7 +940,6 @@ pub fn parse(
                     bow2(&words_vec[1].1, &words_vec[2].1),
                     words_vec[1].2 + words_vec[2].2,
                     vec![words_vec[1].0, words_vec[2].0],
-                    &synonyms,
                 );
             }
         }
@@ -725,7 +954,6 @@ pub fn parse(
             bow2(&words_vec[0].1.clone(), &words_vec[1].1.clone()),
             &words_vec[0].2 + &words_vec[1].2,
             vec![words_vec[0].0, words_vec[1].0],
-            &synonyms,
         );
     }
 
@@ -738,7 +966,6 @@ pub fn parse(
             bow2(&words_vec[0].1.clone(), &words_vec[2].1.clone()),
             &words_vec[0].2 + &words_vec[2].2,
             vec![words_vec[0].0, words_vec[2].0],
-            &synonyms,
         );
     }
 
@@ -756,7 +983,9 @@ pub fn parse(
 mod tests {
     use super::*;
     use fst::Map;
+    use std::path::PathBuf;
     use stopwords;
+    use synonyms;
     use util::*;
 
     #[test]
@@ -778,7 +1007,7 @@ mod tests {
     fn test_get_norm_query_vec() {
         let q = "ruby date and time as string";
         let e = vec!["ruby", "date", "and", "time", "as", "string"];
-        let (words, _) = get_norm_query_vec(q, ParseMode::Search);
+        let (words, _) = get_norm_query_vec(q, &None, ParseMode::Search);
         assert_eq!(words, e);
 
         let q = "sim karte defekt t mobile iphone";
@@ -788,14 +1017,14 @@ mod tests {
             .into_iter()
             .map(|(i, s)| (i, s.to_string()))
             .collect::<FnvHashMap<usize, String>>();
-        let (words, synonyms) = get_norm_query_vec(q, ParseMode::Search);
+        let (words, synonyms) = get_norm_query_vec(q, &None, ParseMode::Search);
         assert_eq!(words, e_words);
         assert_eq!(synonyms, e_synonyms);
 
         let q = "sim karte defekt t mobile iphone";
         let e_words = vec!["sim", "karte", "defekt", "mobile", "iphone"];
         let e_suffix_letters: FnvHashMap<usize, String> = FnvHashMap::default();
-        let (words, suffix_letters) = get_norm_query_vec(q, ParseMode::Index);
+        let (words, suffix_letters) = get_norm_query_vec(q, &None, ParseMode::Index);
         assert_eq!(words, e_words);
         assert_eq!(suffix_letters, e_suffix_letters);
 
@@ -805,20 +1034,20 @@ mod tests {
             .into_iter()
             .map(|(i, s)| (i, s.to_string()))
             .collect::<FnvHashMap<usize, String>>();
-        let (words, synonyms) = get_norm_query_vec(q, ParseMode::Search);
+        let (words, synonyms) = get_norm_query_vec(q, &None, ParseMode::Search);
         assert_eq!(words, e_words);
         assert_eq!(synonyms, e_synonyms);
 
         let q = "caddy14 d ersatzteile";
         let e_words = vec!["caddy14", "ersatzteile"];
         let e_synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
-        let (words, synonyms) = get_norm_query_vec(q, ParseMode::Index);
+        let (words, synonyms) = get_norm_query_vec(q, &None, ParseMode::Index);
         assert_eq!(words, e_words);
         assert_eq!(synonyms, e_synonyms);
 
         let q = "r sim 7 free mobile iphone 5";
         let e = vec!["r", "sim", "7", "free", "mobile", "iphone", "5"];
-        let (words, _) = get_norm_query_vec(q, ParseMode::Search);
+        let (words, _) = get_norm_query_vec(q, &None, ParseMode::Search);
         assert_eq!(words, e);
     }
 
@@ -828,7 +1057,7 @@ mod tests {
         stopwords: &FnvHashSet<String>,
         mode: ParseMode,
     ) -> Vec<String> {
-        let (words, _) = get_norm_query_vec(query, mode);
+        let (words, _) = get_norm_query_vec(query, &None, mode);
 
         if words.is_empty() {
             return vec![];
@@ -838,12 +1067,15 @@ mod tests {
             return words;
         }
 
+        let synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
         let (mut word_idx, stop_idx, rels) = index_words(&words, tr_map, stopwords);
-        let stop_ngrams = get_stop_ngrams(&words, &rels, &mut word_idx, &stop_idx);
+
+        let stop_ngrams = get_stop_ngrams(&words, &rels, &mut word_idx, &stop_idx, &synonyms, mode);
 
         stop_ngrams
+            .ngrams
             .iter()
-            .map(|tup| tup.0.clone())
+            .map(|n| n.ngram.clone())
             .collect::<Vec<String>>()
     }
 
@@ -1017,6 +1249,7 @@ mod tests {
 
     fn assert_must_have_words_ngrams_ids(
         query: &str,
+        synonyms: &Option<FnvHashMap<String, String>>,
         stopwords: &FnvHashSet<String>,
         tr_map: &fst::Map,
         mode: ParseMode,
@@ -1024,7 +1257,8 @@ mod tests {
         e_words: Vec<&str>,
         e_ngrams_ids: Vec<(&str, Vec<usize>)>,
     ) {
-        let (_, _, ngrams_ids, words, _, must_have) = parse(query, &stopwords, &tr_map, mode);
+        let (_, _, ngrams_ids, words, _, must_have) =
+            parse(query, synonyms, &stopwords, &tr_map, mode);
         let e_ngrams_ids = e_ngrams_ids
             .into_iter()
             .map(|(s, v)| (s.to_string(), v))
@@ -1037,6 +1271,7 @@ mod tests {
 
     #[test]
     fn test_parse() {
+        let synonyms = Some(synonyms::load(&PathBuf::from("./index/synonyms.txt")).unwrap());
         let stopwords = match stopwords::load("./index/stopwords.txt") {
             Ok(stopwords) => stopwords,
             Err(_) => panic!([
@@ -1058,6 +1293,7 @@ mod tests {
         let q = "list of literature genres txt";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1081,6 +1317,7 @@ mod tests {
         let q = "friends s01 e01 stream";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1101,6 +1338,7 @@ mod tests {
         let q = "emacs bind buffer mode key";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1125,6 +1363,7 @@ mod tests {
         let q = "disneyland paris ticket download";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1145,6 +1384,7 @@ mod tests {
         let q = "cisco 4500e power supply configuration manager";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1177,6 +1417,7 @@ mod tests {
         let q = "tuhh thesis scholarship";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1193,6 +1434,7 @@ mod tests {
         let q = "welche 30 unternehmen sind im dax";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1215,6 +1457,7 @@ mod tests {
         let q = "nidda in alter zeit";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1235,6 +1478,7 @@ mod tests {
         let q = "fsck inode has imagic flag set";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1262,6 +1506,7 @@ mod tests {
         let q = "python programming to iota";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1283,6 +1528,7 @@ mod tests {
         let q = "dinkel vollkorn toasties rezept";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1302,6 +1548,7 @@ mod tests {
         let q = "laravel has many order by";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1324,6 +1571,7 @@ mod tests {
         let q = "samsung tv skype 2017";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1343,6 +1591,7 @@ mod tests {
         let q = "positionierte stl datei exportieren catia";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1366,6 +1615,7 @@ mod tests {
         let q = "caddy14 d ersatzteile";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1378,6 +1628,7 @@ mod tests {
         let q = "caddy14 d ersatzteile";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -1388,12 +1639,40 @@ mod tests {
                 ("caddy14d", vec![0]),
                 ("caddy14", vec![0]),
                 ("caddy14 ersatzteile", vec![0, 1]),
+                ("caddy14d ersatzteile", vec![0, 1]),
+            ],
+        );
+
+        // search mode!
+        let q = "pokemon best vs rock";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &synonyms,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![0],
+            vec!["pokemon", "best", "vs", "rock"],
+            // TODO fix: should have also ("caddy14d erzatzteile", vec![0, 1]),
+            vec![
+                ("best rock", vec![1, 3]),
+                ("against rock", vec![2, 3]),
+                ("best pokemon", vec![0, 1]),
+                ("best vs", vec![1, 2]),
+                ("against best", vec![2, 1]),
+                ("rock", vec![3]),
+                ("pokemon rock vs", vec![0, 3, 2]),
+                ("rock vs", vec![2, 3]),
+                ("against pokemon", vec![2, 0]),
+                ("pokemon rock", vec![0, 3]),
+                ("pokemon vs", vec![0, 2]),
             ],
         );
 
         let q = "friends s01 e01 stream";
         assert_must_have_words_ngrams_ids(
             q,
+            &None, // TODO add test for synonyms
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -1415,6 +1694,7 @@ mod tests {
         let q = "calypso k5177"; // fix k5177==k5117, calypso is not included in ngrams,
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -1430,6 +1710,7 @@ mod tests {
         let q = "kenzan flowers size";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -1444,9 +1725,9 @@ mod tests {
         );
         // assert equal outcomes for different parsing modes
         let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
-            parse(q, &stopwords, &tr_map, ParseMode::Index);
+            parse(q, &synonyms, &stopwords, &tr_map, ParseMode::Index);
         let (_, _, i_ngrams_ids, i_words, _, i_must_have) =
-            parse(q, &stopwords, &tr_map, ParseMode::Search);
+            parse(q, &synonyms, &stopwords, &tr_map, ParseMode::Search);
         assert_eq!(s_ngrams_ids, i_ngrams_ids);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
@@ -1454,6 +1735,7 @@ mod tests {
         let q = "what size kenzan";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -1467,9 +1749,9 @@ mod tests {
         );
         // assert equal outcomes for different parsing modes
         let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
-            parse(q, &stopwords, &tr_map, ParseMode::Index);
+            parse(q, &None, &stopwords, &tr_map, ParseMode::Index);
         let (_, _, i_ngrams_ids, i_words, _, i_must_have) =
-            parse(q, &stopwords, &tr_map, ParseMode::Search);
+            parse(q, &None, &stopwords, &tr_map, ParseMode::Search);
         assert_eq!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
@@ -1477,6 +1759,7 @@ mod tests {
         let q = "ormlite callintransaction and h2";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -1494,9 +1777,9 @@ mod tests {
         );
         // assert equal outcomes for different parsing modes [ormlite missing on indexing part]
         let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
-            parse(q, &stopwords, &tr_map, ParseMode::Search);
+            parse(q, &None, &stopwords, &tr_map, ParseMode::Search);
         let (_, _, i_ngrams_ids, i_words, _, i_must_have) =
-            parse(q, &stopwords, &tr_map, ParseMode::Index);
+            parse(q, &None, &stopwords, &tr_map, ParseMode::Index);
         assert_eq!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
@@ -1504,6 +1787,7 @@ mod tests {
         let q = "who was the first to invent bicycle";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -1527,6 +1811,7 @@ mod tests {
         let q = "youngest person to walk on the moon";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -1552,6 +1837,7 @@ mod tests {
         let q = "youngest person on the moon";
         assert_must_have_words_ngrams_ids(
             q,
+            &synonyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,

@@ -38,6 +38,7 @@ pub mod ngrams;
 pub mod shard;
 pub mod stopwords;
 pub mod stringvec;
+pub mod synonyms;
 
 use util::{BRED, BYELL, ECOL};
 
@@ -242,6 +243,7 @@ fn get_shard_results(
 pub struct Qpick {
     path: String,
     config: config::Config,
+    synonyms: Option<FnvHashMap<String, String>>,
     stopwords: FnvHashSet<String>,
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
@@ -316,6 +318,13 @@ impl Qpick {
             .join("")),
         };
 
+        let synonyms_path = PathBuf::from(&path).join(&c.synonyms_file);
+        let synonyms = if synonyms_path.is_file() {
+            Some(synonyms::load(&synonyms_path).unwrap())
+        } else {
+            None
+        };
+
         let terms_relevance_path = &format!("{}/{}", path, c.terms_relevance_file);
         let terms_relevance = match Map::from_path(terms_relevance_path) {
             Ok(terms_relevance) => terms_relevance,
@@ -354,7 +363,7 @@ impl Qpick {
                 util::advise_ram(&shard[..]).expect(&format!("Advisory failed for shard {}", i));
 
                 let i2q_path = PathBuf::from(&path).join(&format!("{}.{}", c.i2q_file, i));
-                let i2q = if i2q_path.exists() {
+                let i2q = if i2q_path.is_file() {
                     Some(stringvec::StrVec::load(&i2q_path))
                 } else {
                     None
@@ -379,6 +388,7 @@ impl Qpick {
         Qpick {
             config: c,
             path: path,
+            synonyms: synonyms,
             stopwords: stopwords,
             terms_relevance: terms_relevance,
             shards: Arc::new(shards),
@@ -517,6 +527,7 @@ impl Qpick {
         let mut dist_results: Vec<DistanceResult> = vec![];
         let (ngrams, trs, ngrams_ids, words, wrs, _) = ngrams::parse(
             &query,
+            &self.synonyms,
             &self.stopwords,
             &self.terms_relevance,
             ngrams::ParseMode::Search,
@@ -531,6 +542,7 @@ impl Qpick {
         for cand_query in candidates.into_iter() {
             let (cand_ngrams, ctrs, _, _, _, _) = ngrams::parse(
                 &cand_query,
+                &self.synonyms,
                 &self.stopwords,
                 &self.terms_relevance,
                 ngrams::ParseMode::Search,
@@ -575,6 +587,7 @@ impl Qpick {
 
         let (ngrams, trs, ngrams_ids, words, wrs, must_have) = ngrams::parse(
             &query,
+            &self.synonyms,
             &self.stopwords,
             &self.terms_relevance,
             ngrams::ParseMode::Search,

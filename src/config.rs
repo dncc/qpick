@@ -12,6 +12,7 @@ pub struct Config {
     pub shard_size: usize, // number of ids in the shard
     pub terms_relevance_file: String,
     pub stopwords_file: String,
+    pub synonyms_file: String,
     pub i2q_file: String,
 }
 
@@ -63,9 +64,14 @@ impl Config {
             _ => panic!("Failed to load stopwords file name from the config!"),
         };
 
+        let synonyms_file = match config["synonyms_file"] {
+            Value::String(ref synonyms_file) => synonyms_file.as_str(),
+            _ => "",
+        };
+
         let i2q_file = match config["i2q_file"] {
             Value::String(ref i2q_file) => i2q_file.as_str(),
-            _ => panic!("Failed to load i2q file name from the config!"),
+            _ => "",
         };
 
         Config {
@@ -74,6 +80,7 @@ impl Config {
             nr_shards: nr_shards as usize,
             shard_size: shard_size as usize,
             terms_relevance_file: terms_relevance_file.to_string(),
+            synonyms_file: synonyms_file.to_string(),
             stopwords_file: stopwords_file.to_string(),
             i2q_file: i2q_file.to_string(),
         }

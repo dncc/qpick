@@ -49,7 +49,8 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         qpick = qpick::Qpick::from_path("./index".to_string());
     }
 
-    let candidates: Vec<String> = args.arg_candidates
+    let candidates: Vec<String> = args
+        .arg_candidates
         .split(",")
         .map(|x| x.trim().to_string())
         .collect::<Vec<String>>();
