@@ -52,7 +52,7 @@ use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
 use memmap::Mmap;
 use pbr::ProgressBar;
 use shard::parse_query_line;
-use std::mem::size_of;
+use std::mem::{size_of, MaybeUninit};
 use std::path::Path;
 
 use util;
@@ -73,7 +73,7 @@ pub struct Offset(pub [u8; BYTES_PER_OFFSET]);
 
 impl From<usize> for Offset {
     fn from(integer: usize) -> Self {
-        let mut data: [u8; BYTES_PER_OFFSET] = unsafe { ::std::mem::uninitialized() };
+        let mut data: [u8; BYTES_PER_OFFSET] = unsafe { MaybeUninit::uninit().assume_init() };
         LittleEndian::write_uint(&mut data, integer as u64, BYTES_PER_OFFSET);
         Offset(data)
     }

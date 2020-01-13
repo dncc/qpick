@@ -18,7 +18,7 @@ pub struct Config {
 
 impl Config {
     fn load_config_file(path: &str) -> Result<String, Error> {
-        let f = try!(File::open(format!("{}/config.json", path)));
+        let f = File::open(format!("{}/config.json", path))?;
         let mut buf = BufReader::new(&f);
         let mut config = String::new();
         buf.read_to_string(&mut config).unwrap();

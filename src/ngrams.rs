@@ -884,7 +884,7 @@ pub fn parse(
                                 &mut ngrams,
                                 &mut ngrams_relevs,
                                 &mut ngrams_ids,
-                                syn.clone(),
+                                syn.to_string(),
                                 words_vec[*word_idx].2,
                                 vec![words_vec[*word_idx].0],
                             );
@@ -897,6 +897,7 @@ pub fn parse(
         }
     }
 
+    // include synonyms for the most important word only
     if words_len > 3 {
         // ngram with 3 most relevant words
         update(
@@ -912,6 +913,20 @@ pub fn parse(
             vec![words_vec[0].0, words_vec[1].0, words_vec[2].0],
         );
 
+        // add (syn, w1, w2)
+        if mode == ParseMode::Search {
+            if let Some(syn) = synonyms.get(&words_vec[0].0) {
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
+                    bow3(&syn, &words_vec[1].1.clone(), &words_vec[2].1.clone()),
+                    words_vec[0].2 + words_vec[1].2 + words_vec[2].2,
+                    vec![words_vec[0].0, words_vec[1].0, words_vec[2].0],
+                );
+            };
+        };
+
         if let Some(last) = words_vec.pop() {
             // ngram with the most and the least relevant word
             // if any of the top 2 words is bellow the word_thresh
@@ -924,6 +939,20 @@ pub fn parse(
                     words_vec[0].2 + last.2,
                     vec![words_vec[0].0, last.0],
                 );
+
+                // add (syn_w0, last)
+                if mode == ParseMode::Search {
+                    if let Some(syn) = synonyms.get(&words_vec[0].0) {
+                        update(
+                            &mut ngrams,
+                            &mut ngrams_relevs,
+                            &mut ngrams_ids,
+                            bow2(syn, &last.1.clone()),
+                            words_vec[0].2 + last.2,
+                            vec![words_vec[0].0, last.0],
+                        );
+                    };
+                };
             } else {
                 update(
                     &mut ngrams,
@@ -941,6 +970,28 @@ pub fn parse(
                     words_vec[1].2 + words_vec[2].2,
                     vec![words_vec[1].0, words_vec[2].0],
                 );
+
+                // add (syn_w1, last), (syn_w1, w2)
+                if mode == ParseMode::Search {
+                    if let Some(syn) = synonyms.get(&words_vec[1].0) {
+                        update(
+                            &mut ngrams,
+                            &mut ngrams_relevs,
+                            &mut ngrams_ids,
+                            bow2(syn, &last.1.clone()),
+                            words_vec[1].2 + last.2,
+                            vec![words_vec[1].0, last.0],
+                        );
+                        update(
+                            &mut ngrams,
+                            &mut ngrams_relevs,
+                            &mut ngrams_ids,
+                            bow2(syn, &words_vec[2].1),
+                            words_vec[1].2 + words_vec[2].2,
+                            vec![words_vec[1].0, words_vec[2].0],
+                        );
+                    };
+                };
             }
         }
     }
@@ -955,6 +1006,20 @@ pub fn parse(
             &words_vec[0].2 + &words_vec[1].2,
             vec![words_vec[0].0, words_vec[1].0],
         );
+
+        // add (syn_w0, w1)
+        if mode == ParseMode::Search {
+            if let Some(syn) = synonyms.get(&words_vec[0].0) {
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
+                    bow2(syn, &words_vec[1].1.clone()),
+                    words_vec[0].2 + words_vec[1].2,
+                    vec![words_vec[0].0, words_vec[1].0],
+                );
+            };
+        };
     }
 
     if words_len >= 4 {
@@ -967,6 +1032,20 @@ pub fn parse(
             &words_vec[0].2 + &words_vec[2].2,
             vec![words_vec[0].0, words_vec[2].0],
         );
+
+        // add (syn_0, w2)
+        if mode == ParseMode::Search {
+            if let Some(syn) = synonyms.get(&words_vec[0].0) {
+                update(
+                    &mut ngrams,
+                    &mut ngrams_relevs,
+                    &mut ngrams_ids,
+                    bow2(syn, &words_vec[2].1.clone()),
+                    words_vec[0].2 + words_vec[2].2,
+                    vec![words_vec[0].0, words_vec[2].0],
+                );
+            };
+        };
     }
 
     (
@@ -1790,7 +1869,7 @@ mod tests {
             &synonyms,
             &stopwords,
             &tr_map,
-            ParseMode::Search,
+            ParseMode::Index,
             vec![6],
             vec!["who", "was", "the", "first", "to", "invent", "bicycle"],
             vec![
@@ -1805,6 +1884,35 @@ mod tests {
                 ("bicycle first", vec![3, 6]),
                 ("bicycle the was who", vec![0, 1, 2, 6]),
                 ("bicycle invent", vec![6, 5]),
+            ],
+        );
+
+        let q = "who was the first to invent bicycle";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &synonyms,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search, // include synonyms bicycle -> bike
+            vec![6],
+            vec!["who", "was", "the", "first", "to", "invent", "bicycle"],
+            vec![
+                ("first invent", vec![5, 3]),
+                ("bicycle first invent", vec![6, 5, 3]),
+                ("bike first invent", vec![6, 5, 3]),
+                ("bicycle invent to", vec![4, 5, 6]),
+                ("bike invent to", vec![6, 4, 5]),
+                ("first the was who", vec![0, 1, 2, 3]),
+                ("invent to the was who", vec![0, 1, 2, 4, 5]),
+                ("first invent to", vec![3, 4, 5]),
+                ("invent to", vec![4, 5]),
+                ("invent", vec![5]),
+                ("bicycle first", vec![3, 6]),
+                ("bike first", vec![6, 3]),
+                ("bicycle the was who", vec![0, 1, 2, 6]),
+                ("bike the was who", vec![6, 0, 1, 2]),
+                ("bicycle invent", vec![6, 5]),
+                ("bike invent", vec![6, 5]),
             ],
         );
 

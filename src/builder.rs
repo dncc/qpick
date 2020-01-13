@@ -124,7 +124,7 @@ pub fn index(
     let c = config::Config::init(output_dir.to_string());
 
     // create index dir if it doesn't exist
-    try!(fs::create_dir_all(output_dir));
+    fs::create_dir_all(output_dir)?;
 
     let (sender, receiver) = mpsc::channel();
 
@@ -275,11 +275,11 @@ pub fn build_shard(
 
     // remove previous index first if exists
     remove_file_if_exists!(out_map_name);
-    let wtr = BufWriter::new(try!(File::create(out_map_name)));
+    let wtr = BufWriter::new(File::create(out_map_name)?);
 
     println!("Map {} init...", out_map_name);
     // Create a builder that can be used to insert new key-value pairs.
-    let mut build = try!(MapBuilder::new(wtr));
+    let mut build = MapBuilder::new(wtr)?;
 
     // remove previous index first if exists
     remove_file_if_exists!(out_shard_name);
@@ -312,7 +312,7 @@ pub fn build_shard(
     }
 
     // Finish construction of the map and flush its contents to disk.
-    try!(build.finish());
+    build.finish()?;
 
     println!("Shard {} created", out_shard_name);
     Ok(())

@@ -34,16 +34,16 @@ const PROGRESS: u64 = 1_000_000;
 pub fn merge(dir_path: &str, nr_shards: usize) -> Result<(), Error> {
     let mut fsts = vec![];
     for i in 0..nr_shards {
-        let fst = try!(raw::Fst::from_path(format!("{}/map.{}", dir_path, i)));
+        let fst = raw::Fst::from_path(format!("{}/map.{}", dir_path, i))?;
         fsts.push(fst);
     }
     let mut union = fsts.iter().collect::<raw::OpBuilder>().union();
 
-    let wtr = BufWriter::new(try!(File::create(format!(
+    let wtr = BufWriter::new(File::create(format!(
         "{}/union_map.{}.fst",
         dir_path, nr_shards
-    ))));
-    let mut builder = try!(raw::Builder::new(wtr));
+    ))?);
+    let mut builder = raw::Builder::new(wtr)?;
 
     let mut count: u64 = 0;
     while let Some((k, vs)) = union.next() {
@@ -63,7 +63,7 @@ pub fn merge(dir_path: &str, nr_shards: usize) -> Result<(), Error> {
             println!("Merging {:.1}M ...", count / PROGRESS);
         }
     }
-    try!(builder.finish());
+    builder.finish()?;
 
     Ok(())
 }

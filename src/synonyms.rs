@@ -19,7 +19,7 @@ pub fn parse_line(line: &str) -> Result<(String, String), Error> {
 pub fn load(path: &Path) -> Result<FnvHashMap<String, String>, Error> {
     let mut synonyms = FnvHashMap::default();
 
-    let f = try!(File::open(path));
+    let f = File::open(path)?;
     let file = BufReader::new(&f);
 
     for line in file.lines() {
