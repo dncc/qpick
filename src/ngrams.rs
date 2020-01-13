@@ -100,7 +100,7 @@ pub fn u8_find_and_replace<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> 
         for c in rest {
             match c {
                 b'!' | b',' | b'?' | b':' => (),
-                b'#' | b'@' | b'(' | b')' | b';' | b'.' | b'/' | b'\'' | b'+' | b'-' => {
+                b'#' | b'@' | b'(' | b')' | b';' | b'.' | b'/' | b'\'' | b'+' | b'-' | b'_' => {
                     output.extend_from_slice(b" ")
                 }
                 _ => output.push(c),
@@ -1047,6 +1047,23 @@ pub fn parse(
             };
         };
     }
+
+    // println!("stop_ngrams {:?}", stop_ngrams);
+    // println!("---");
+    // println!("ngrams {:?}", ngrams);
+    // println!("---");
+    // println!("ngrams_relevs {:?}", ngrams_relevs);
+    // println!("---");
+    // println!("ngrams_ids {:?}", ngrams_ids);
+    // println!("---");
+    // println!("words {:?}", words);
+    // println!("---");
+    // println!("words_relevs {:?}", words_relevs);
+    // println!("---");
+    // println!("must have {:?}", must_have);
+    // println!("---");
+    // println!("synonyms {:?}", synonyms);
+    // println!("---");
 
     (
         ngrams,

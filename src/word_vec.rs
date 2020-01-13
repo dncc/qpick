@@ -3,13 +3,15 @@ use fnv::{FnvHashMap, FnvHashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+use std::path::Path;
+
 use blas;
 
 use ngrams::MISS_WORD_REL;
 use std::mem::MaybeUninit;
 use util;
 
-pub const DIM: usize = 201; // TODO in the config!
+pub const DIM: usize = 301; // TODO in the config!
 pub const UPPER_COS_BOUND: f32 = 1.0;
 
 #[inline]
@@ -41,7 +43,7 @@ pub struct WordDict {
 }
 
 impl WordDict {
-    pub fn load(path: &str) -> Self {
+    pub fn load(path: &Path) -> Self {
         let word_file = BufReader::new(File::open(&path).unwrap());
         let word_to_id = word_file
             .lines()
@@ -136,7 +138,7 @@ pub struct WordVecs<'a> {
 }
 
 impl<'a> WordVecs<'a> {
-    pub fn load(words_file: &str, word_vecs_file: &str) -> Self {
+    pub fn load(words_file: &Path, word_vecs_file: &Path) -> Self {
         let word_dict = WordDict::load(words_file);
 
         let file = File::open(word_vecs_file).unwrap();
@@ -214,6 +216,7 @@ mod tests {
     use std::env::temp_dir;
     use std::fs::File;
     use std::io::Write;
+    use std::path::PathBuf;
     use std::str;
 
     fn get_random_words(num: usize, word_len: usize) -> Vec<String> {
@@ -285,10 +288,9 @@ mod tests {
             file.write_all(&buffer).unwrap();
         }
 
-        let wv = WordVecs::load(
-            tmp_words_file.to_str().unwrap(),
-            tmp_word_vecs_file.to_str().unwrap(),
-        );
+        let tmp_words_path = PathBuf::from(&tmp_words_file);
+        let tmp_word_vecs_path = PathBuf::from(&tmp_word_vecs_file);
+        let wv = WordVecs::load(&tmp_words_path, &tmp_word_vecs_path);
 
         assert_eq!(num_words, wv.word_vecs.len());
         assert_eq!(num_words, wv.word_dict.len());

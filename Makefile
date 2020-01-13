@@ -7,7 +7,7 @@ PROJECT_REMOTE_PATH := /root/${USER}/${PROJECT_DIR}
 INDEX_REMOTE_PATH := /raid/qpick/output
 
 QPICK_BRANCH := master
-TMUXW := 1
+TMUXW := 0
 
 .PHONY: install/req
 install/req:

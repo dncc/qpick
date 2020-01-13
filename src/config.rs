@@ -79,12 +79,12 @@ impl Config {
 
         let words_file = match config["words_file"] {
             Value::String(ref words_file) => words_file.as_str(),
-            _ => panic!("Failed to parse words file name from the config!"),
+            _ => "",
         };
 
         let word_vecs_file = match config["word_vecs_file"] {
             Value::String(ref word_vecs_file) => word_vecs_file.as_str(),
-            _ => panic!("Failed to parse embeddings file name from the config!"),
+            _ => "",
         };
 
         let use_word_vectors = match config["use_word_vectors"] {

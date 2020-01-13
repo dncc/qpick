@@ -434,7 +434,11 @@ impl<'a> Qpick<'a> {
 
         let mut word_vecs = None;
         if c.use_word_vectors {
-            word_vecs = Some(WordVecs::load(&c.words_file, &c.word_vecs_file));
+            let words_path = PathBuf::from(&c.words_file);
+            let word_vecs_path = PathBuf::from(&c.word_vecs_file);
+            if words_path.is_file() && word_vecs_path.is_file() {
+                word_vecs = Some(WordVecs::load(&words_path, &word_vecs_path));
+            }
         }
 
         Qpick {
