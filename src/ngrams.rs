@@ -282,10 +282,11 @@ pub fn get_words_relevances(
     query: &str,
     tr_map: &fst::Map,
     stopwords: &FnvHashSet<String>,
+    synonyms: &FnvHashMap<usize, String>,
     mode: ParseMode,
 ) -> FnvHashMap<String, f32> {
     let (words, _) = get_norm_query_vec(query, &None, mode);
-    let (_, _, relevs) = index_words(&words, tr_map, stopwords);
+    let (_, _, relevs) = index_words(&words, tr_map, stopwords, synonyms);
 
     words
         .iter()
@@ -299,6 +300,7 @@ pub fn index_words(
     words: &Vec<String>,
     tr_map: &fst::Map,
     stopwords: &FnvHashSet<String>,
+    synonyms: &FnvHashMap<usize, String>,
 ) -> (Vec<usize>, Vec<usize>, Vec<f32>) {
     let words_len = words.len();
     let mut rels: Vec<f32> = Vec::with_capacity(words_len);
@@ -314,10 +316,15 @@ pub fn index_words(
         if stopwords.contains(word) || word.len() == 1 {
             rel = 0.5 * rel;
             stop_vec.push(i);
+            rels.push(rel);
         } else {
+            if synonyms.contains_key(&i) {
+                let syn = synonyms.get(&i).unwrap();
+                rel = util::max(tr_map.get(syn).unwrap_or(MISS_WORD_REL) as f32, rel);
+            }
             word_vec.push(i);
+            rels.push(rel);
         }
-        rels.push(rel);
 
         if rel < min_rel {
             min_rel = rel;
@@ -686,7 +693,7 @@ pub fn parse(
         return (ngrams, ngrams_relevs, ngrams_ids, words, vec![1.0], vec![0]);
     }
 
-    let (mut word_idx, stop_idx, words_relevs) = index_words(&words, tr_map, stopwords);
+    let (mut word_idx, stop_idx, words_relevs) = index_words(&words, tr_map, stopwords, &synonyms);
     let stop_ngrams = get_stop_ngrams(
         &words,
         &words_relevs,
@@ -1164,7 +1171,7 @@ mod tests {
         }
 
         let synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
-        let (mut word_idx, stop_idx, rels) = index_words(&words, tr_map, stopwords);
+        let (mut word_idx, stop_idx, rels) = index_words(&words, tr_map, stopwords, &synonyms);
 
         let stop_ngrams = get_stop_ngrams(&words, &rels, &mut word_idx, &stop_idx, &synonyms, mode);
 
