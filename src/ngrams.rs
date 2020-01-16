@@ -864,8 +864,8 @@ pub fn parse(
         must_have.push(words_vec[0].0);
     } else if words_len <= 5 {
         if (words_len > 4 && words_vec[1].2 < 0.78 * words_vec[0].2)
-            || (words_len < 4 && words_vec[1].2 < 0.87 * words_vec[0].2)
-            || (words_len == 4 && words_vec[1].2 < 0.85 * words_vec[0].2)
+            || (words_len < 4 && words_vec[1].2 < 0.85 * words_vec[0].2)
+            || (words_len == 4 && words_vec[1].2 < 0.83 * words_vec[0].2)
         {
             for (word_idx, word, word_rel) in words_vec.iter() {
                 // skip serial numbers, dates, 's01' 's02' type of words,
