@@ -8,7 +8,7 @@ use std::borrow::Cow;
 pub const MISS_WORD_REL: u64 = 6666;
 pub const WORDS_PER_QUERY: usize = 15;
 
-const PUNCT_SYMBOLS: &str = "[/@#!,'?:();.+-]";
+const PUNCT_SYMBOLS: &str = "[/@#!,'?:();.+-_]";
 
 macro_rules! vec_push_str {
     // Base case:
@@ -99,8 +99,8 @@ pub fn u8_find_and_replace<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> 
         let rest = input[start..].bytes();
         for c in rest {
             match c {
-                b'!' | b',' | b'?' | b':' => (),
-                b'#' | b'@' | b'(' | b')' | b';' | b'.' | b'/' | b'\'' | b'+' | b'-' | b'_' => {
+                b'!' | b',' | b'?' | b':' | b'\'' => (),
+                b'#' | b'@' | b'(' | b')' | b';' | b'.' | b'/' | b'+' | b'-' | b'_' => {
                     output.extend_from_slice(b" ")
                 }
                 _ => output.push(c),
@@ -857,51 +857,50 @@ pub fn parse(
     }
 
     // identify must have word
+    let mut must_word_idx: usize = words_len;
     if words_vec[0].2 > 1.85 * word_thresh
         || (words_len > 1 && words_vec[0].2 > 0.6)
         || (words_len > 2 && words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
     {
+        must_word_idx = words_vec[0].0;
         must_have.push(words_vec[0].0);
     } else if words_len <= 5 {
         if (words_len > 4 && words_vec[1].2 < 0.78 * words_vec[0].2)
-            || (words_len < 4 && words_vec[1].2 < 0.85 * words_vec[0].2)
-            || (words_len == 4 && words_vec[1].2 < 0.83 * words_vec[0].2)
+            || (words_len <= 4 && words_vec[1].2 < 0.85 * words_vec[0].2)
         {
-            for (word_idx, word, word_rel) in words_vec.iter() {
+            for (word_idx, word, _word_rel) in words_vec.iter() {
                 // skip serial numbers, dates, 's01' 's02' type of words,
                 if word.chars().any(char::is_numeric) {
                     continue;
                 }
 
+                must_word_idx = *word_idx;
                 must_have.push(*word_idx);
-                if words_len < 5 && mode == ParseMode::Search {
-                    update(
-                        &mut ngrams,
-                        &mut ngrams_relevs,
-                        &mut ngrams_ids,
-                        word.clone(),
-                        *word_rel,
-                        vec![*word_idx],
-                    );
-
-                    // unigram synonyms
-                    if mode == ParseMode::Search {
-                        if let Some(syn) = synonyms.get(word_idx) {
-                            update(
-                                &mut ngrams,
-                                &mut ngrams_relevs,
-                                &mut ngrams_ids,
-                                syn.to_string(),
-                                words_vec[*word_idx].2,
-                                vec![words_vec[*word_idx].0],
-                            );
-                        };
-                    };
-                }
-
                 break;
             }
         }
+    }
+
+    if must_word_idx < words_len && words_len < 5 && mode == ParseMode::Search {
+        update(
+            &mut ngrams,
+            &mut ngrams_relevs,
+            &mut ngrams_ids,
+            words[must_word_idx].clone(),
+            words_relevs[must_word_idx],
+            vec![must_word_idx],
+        );
+        // println!("ngrams after update: {:?}", ngrams);
+        if let Some(syn) = synonyms.get(&must_word_idx) {
+            update(
+                &mut ngrams,
+                &mut ngrams_relevs,
+                &mut ngrams_ids,
+                syn.to_string(),
+                words_relevs[must_word_idx],
+                vec![must_word_idx],
+            );
+        };
     }
 
     // include synonyms for the most important word only
@@ -1094,15 +1093,19 @@ mod tests {
     #[test]
     fn test_u8_find_and_replace() {
         let q = "'Here's@#An ##example!";
-        let e = "here s  an   example";
+        let e = "heres  an   example";
         assert_eq!(normalize(q), e);
 
         let q = "'Here's@#another one with some question?## and a comma, and (parenthesis)!";
-        let e = "here s  another one with some question   and a comma and  parenthesis";
+        let e = "heres  another one with some question   and a comma and  parenthesis";
         assert_eq!(normalize(q), e);
 
         let q = "München Gödel Gießen Bären";
         let e = "muenchen goedel giessen baeren";
+        assert_eq!(normalize(q), e);
+
+        let q = "root_type hubspot";
+        let e = "root type hubspot";
         assert_eq!(normalize(q), e);
     }
 
@@ -1769,6 +1772,7 @@ mod tests {
                 ("against pokemon", vec![2, 0]),
                 ("pokemon rock", vec![0, 3]),
                 ("pokemon vs", vec![0, 2]),
+                ("pokemon", vec![0]),
             ],
         );
 
@@ -1875,15 +1879,16 @@ mod tests {
                 ("callintransaction ormlite", vec![0, 1]),
                 ("and callintransaction", vec![1, 2]),
                 ("h2 ormlite", vec![0, 3]),
+                ("ormlite", vec![0]),
                 ("callintransaction h2 ormlite", vec![0, 1, 3]),
             ],
         );
-        // assert equal outcomes for different parsing modes [ormlite missing on indexing part]
+        // assert (not) equal outcomes for different parsing modes [ormlite missing on indexing part]
         let (_, _, s_ngrams_ids, s_words, _, s_must_have) =
             parse(q, &None, &stopwords, &tr_map, ParseMode::Search);
         let (_, _, i_ngrams_ids, i_words, _, i_must_have) =
             parse(q, &None, &stopwords, &tr_map, ParseMode::Index);
-        assert_eq!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
+        assert_ne!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
 
