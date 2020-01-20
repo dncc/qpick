@@ -221,7 +221,6 @@ struct ShardResults {
 pub struct KeywordMatchResult {
     pub query_id: u64, // query id unique globally
     pub dist: f32,
-    pub missing_words: Vec<usize>,
 }
 impl_partial_ord!(KeywordMatchResult, query_id, dist);
 
@@ -547,19 +546,9 @@ impl<'a> Qpick<'a> {
                 (query_id, util::max(1.0 - similarity, 0.0), words_rel_vec)
             })
             .filter(|(_, dist, _)| *dist < DIST_THRESH)
-            .map(|(query_id, dist, words_rel_vec)| {
-                let missing_words = words_rel_vec
-                    .into_iter()
-                    .enumerate()
-                    .filter(|(_, r)| *r == 0.0)
-                    .map(|(i, _)| i)
-                    .collect::<Vec<usize>>();
-
-                KeywordMatchResult {
-                    query_id: query_id,
-                    dist: dist,
-                    missing_words: missing_words,
-                }
+            .map(|(query_id, dist, _)| KeywordMatchResult {
+                query_id: query_id,
+                dist: dist,
             })
             .collect::<Vec<KeywordMatchResult>>();
         keyword_matches.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
@@ -574,19 +563,14 @@ impl<'a> Qpick<'a> {
             .take(util::max(count.unwrap_or(FETCH_MIN), FETCH_MIN))
             .map(|m| {
                 let (sh_qid, sh_id) = ids_map.get(&m.query_id).unwrap();
-                let mquery = self.shards[*sh_id as usize]
+                let cand_query = self.shards[*sh_id as usize]
                     .i2q
                     .as_ref()
                     .map(|i2q| i2q[*sh_qid as usize].to_string())
                     .unwrap_or(String::from(""));
 
-                let cosine_dist = self.cosine_diff_distance(
-                    &words_set,
-                    &words,
-                    &mquery,
-                    &m.missing_words,
-                    m.dist,
-                );
+                let cosine_dist =
+                    self.cosine_diff_distance(&words_set, &words, &cand_query, m.dist);
 
                 let dist = Distance {
                     query_id: m.query_id,
@@ -597,7 +581,7 @@ impl<'a> Qpick<'a> {
                 SearchResult {
                     query_id: m.query_id,
                     dist: dist,
-                    query: Some(mquery),
+                    query: Some(cand_query),
                 }
             })
             .collect();
@@ -613,7 +597,6 @@ impl<'a> Qpick<'a> {
         words_set: &FnvHashSet<String>,
         words: &Vec<String>,
         cand_query: &str,
-        missing_words: &Vec<usize>,
         keyword_dist: f32,
     ) -> Option<f32> {
         if self.word_vecs.is_none() {
@@ -639,9 +622,9 @@ impl<'a> Qpick<'a> {
             &self.stopwords,
         );
 
-        let missing_words = missing_words
-            .iter()
-            .map(|i| words[*i].to_string())
+        let missing_words = words_set
+            .difference(&cand_words)
+            .map(|w| w.to_string())
             .collect::<Vec<String>>();
         let missing_len = missing_words.len();
 
@@ -811,20 +794,8 @@ impl<'a> Qpick<'a> {
             });
             let keyword_dist = util::max(1.0 - sim, 0.0);
 
-            let missing_words = words_rel_vec
-                .into_iter()
-                .enumerate()
-                .filter(|(_, r)| *r == 0.0)
-                .map(|(i, _)| i)
-                .collect::<Vec<usize>>();
-
-            let cosine_dist = self.cosine_diff_distance(
-                &words_set,
-                &words,
-                &cand_query,
-                &missing_words,
-                keyword_dist,
-            );
+            let cosine_dist =
+                self.cosine_diff_distance(&words_set, &words, &cand_query, keyword_dist);
 
             dist_results.push(DistanceResult {
                 query: cand_query.to_string(),
