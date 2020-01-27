@@ -11,7 +11,7 @@ use ngrams::MISS_WORD_REL;
 use std::mem::MaybeUninit;
 use util;
 
-pub const DIM: usize = 301; // TODO in the config!
+pub const DIM: usize = 300; // TODO in the config!
 pub const UPPER_COS_BOUND: f32 = 1.0;
 
 #[inline]
@@ -86,8 +86,9 @@ impl WordDict {
         words: &Vec<String>,
         words_relevances: &fst::Map,
         stopwords: &FnvHashSet<String>,
-    ) -> Vec<(usize, f32)> {
-        words
+    ) -> (Vec<(usize, f32)>, FnvHashSet<String>) {
+        let mut not_found_words = FnvHashSet::default();
+        let words_ids = words
             .iter()
             .filter_map(|w| match self.word_to_id.get(w) {
                 Some(word_id) => {
@@ -95,9 +96,15 @@ impl WordDict {
 
                     Some((*word_id, word_rel))
                 }
-                None => None,
+                None => {
+                    not_found_words.insert(w.to_string());
+
+                    None
+                }
             })
-            .collect()
+            .collect();
+
+        (words_ids, not_found_words)
     }
 
     #[inline]
@@ -173,10 +180,10 @@ impl<'a> WordVecs<'a> {
         words: &Vec<String>,
         words_relevances: &fst::Map,
         stopwords: &FnvHashSet<String>,
-    ) -> (Vec<f32>, usize) {
-        let word_ids_rels = self
-            .word_dict
-            .get_words_ids(words, words_relevances, stopwords);
+    ) -> (Vec<f32>, usize, FnvHashSet<String>) {
+        let (word_ids_rels, not_found_words) =
+            self.word_dict
+                .get_words_ids(words, words_relevances, stopwords);
 
         // let mult: bool = word_ids_rels.len() > 1;
         let not_found = words.len() - word_ids_rels.len();
@@ -199,7 +206,7 @@ impl<'a> WordVecs<'a> {
         // normalize(&mut words_vec);
         // }
 
-        (words_vec, not_found)
+        (words_vec, not_found, not_found_words)
     }
 
     #[inline]

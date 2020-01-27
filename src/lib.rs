@@ -285,6 +285,30 @@ fn get_shard_results(
     Ok(ShardResults { results: sres })
 }
 
+#[inline]
+fn index_words(
+    words: &Vec<String>,
+    synonyms: &FnvHashMap<usize, String>,
+) -> (FnvHashMap<String, usize>, FnvHashSet<String>) {
+    let mut words_set: FnvHashSet<String> = FnvHashSet::default();
+    let mut words_index = words
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            words_set.insert(w.to_string());
+
+            (w.to_string(), i)
+        })
+        .collect::<FnvHashMap<String, usize>>();
+
+    for (word_idx, syn) in synonyms {
+        // add synonyms to the index, but not to the words set
+        words_index.insert(syn.to_string(), *word_idx);
+    }
+
+    (words_index, words_set)
+}
+
 pub struct Qpick<'a> {
     path: String,
     config: config::Config,
@@ -492,6 +516,7 @@ impl<'a> Qpick<'a> {
         words: Vec<String>,
         wrs: Vec<f32>,
         must_have: Vec<usize>,
+        synonyms: FnvHashMap<usize, String>,
         count: Option<usize>,
         with_tfidf: bool,
     ) -> Result<Vec<SearchResult>, Error> {
@@ -528,6 +553,7 @@ impl<'a> Qpick<'a> {
                         words_rel_vec[*word_idx] = wrs[*word_idx] * r.weight_rel;
                     }
                 }
+
                 ids_map
                     .entry(r.query_id)
                     .or_insert((r.shard_query_id, r.shard_id));
@@ -553,10 +579,12 @@ impl<'a> Qpick<'a> {
             .collect::<Vec<KeywordMatchResult>>();
         keyword_matches.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
 
-        let words_set = words
+        let (words_index, words_set) = index_words(&words, &synonyms);
+
+        let cand_synonyms: FnvHashMap<String, String> = synonyms
             .iter()
-            .map(|w| w.to_string())
-            .collect::<FnvHashSet<String>>();
+            .map(|(wid, syn)| (syn.to_string(), words[*wid].to_string()))
+            .collect();
 
         let mut search_results: Vec<SearchResult> = keyword_matches
             .into_iter()
@@ -569,12 +597,29 @@ impl<'a> Qpick<'a> {
                     .map(|i2q| i2q[*sh_qid as usize].to_string())
                     .unwrap_or(String::from(""));
 
-                let cosine_dist =
-                    self.cosine_diff_distance(&words_set, &words, &cand_query, m.dist);
+                let (cand_words, match_words, miss_words, excess_words) =
+                    ngrams::match_queries(&cand_query, &words_set, &cand_synonyms);
+
+                // check excess words and update keyword score
+                let mut keyword_dist = m.dist;
+                for eword in &excess_words {
+                    if let Some(word_idx) = words_index.get(eword) {
+                        keyword_dist = util::max(keyword_dist - (m.dist * wrs[*word_idx]), 0.0);
+                    }
+                }
+
+                let cosine_dist = self.cosine_diff_distance(
+                    &words,
+                    &cand_words,
+                    &match_words,
+                    &miss_words,
+                    &excess_words,
+                    keyword_dist,
+                );
 
                 let dist = Distance {
                     query_id: m.query_id,
-                    keyword: m.dist,
+                    keyword: keyword_dist,
                     cosine: cosine_dist,
                 };
 
@@ -594,63 +639,41 @@ impl<'a> Qpick<'a> {
     #[inline]
     fn cosine_diff_distance(
         &self,
-        words_set: &FnvHashSet<String>,
         words: &Vec<String>,
-        cand_query: &str,
+        cand_words: &Vec<String>,
+        match_words: &Vec<String>,
+        miss_words: &Vec<String>,
+        excess_words: &Vec<String>,
         keyword_dist: f32,
     ) -> Option<f32> {
         if self.word_vecs.is_none() {
             return None;
         }
 
-        let cand_query = ngrams::u8_find_and_replace(cand_query);
-        let cand_words = cand_query
-            .clone()
-            .split(" ")
-            .filter(|w| w.len() > 1 || (w.len() == 1 && w.chars().next().unwrap().is_digit(10)))
-            .map(|w| w.to_string())
-            .collect::<FnvHashSet<String>>();
-
-        let match_words = cand_words
-            .intersection(&words_set)
-            .map(|w| w.to_string())
-            .collect::<Vec<String>>();
         let match_len = match_words.len();
-        let (mut rhs_match_vec, nf_match) = self.word_vecs.as_ref().unwrap().get_combined_vec(
-            &match_words,
-            &self.terms_relevance,
-            &self.stopwords,
-        );
+        let (mut rhs_match_vec, nf_match, _nf_match_words) = self
+            .word_vecs
+            .as_ref()
+            .unwrap()
+            .get_combined_vec(&match_words, &self.terms_relevance, &self.stopwords);
 
-        let missing_words = words_set
-            .difference(&cand_words)
-            .map(|w| w.to_string())
-            .collect::<Vec<String>>();
-        let missing_len = missing_words.len();
-
-        let excess_words = cand_words
-            .difference(&words_set)
-            .map(|w| w.to_string())
-            .collect::<Vec<String>>();
+        let missing_len = miss_words.len();
         let excess_len = excess_words.len();
 
-        // println!("miss {:?}", missing_words);
-        // println!("excs {:?}", excess_words);
-        // println!(" --- ");
-        if missing_words.is_empty() && excess_words.is_empty() {
+        if miss_words.is_empty() && excess_words.is_empty() {
             return Some(0.0);
         }
 
-        let (mut missing_vec, nf_miss) = self.word_vecs.as_ref().unwrap().get_combined_vec(
-            &missing_words,
-            &self.terms_relevance,
-            &self.stopwords,
-        );
-        let (mut excess_vec, nf_excs) = self.word_vecs.as_ref().unwrap().get_combined_vec(
-            &excess_words,
-            &self.terms_relevance,
-            &self.stopwords,
-        );
+        let (mut missing_vec, nf_miss, _nf_miss_words) = self
+            .word_vecs
+            .as_ref()
+            .unwrap()
+            .get_combined_vec(&miss_words, &self.terms_relevance, &self.stopwords);
+        let (mut excess_vec, nf_excs, _nf_excs_words) = self
+            .word_vecs
+            .as_ref()
+            .unwrap()
+            .get_combined_vec(&excess_words, &self.terms_relevance, &self.stopwords);
 
         // either no match words or none of them are found
         if nf_match == match_len {
@@ -715,23 +738,18 @@ impl<'a> Qpick<'a> {
     }
 
     #[inline]
-    fn cosine_distance(
-        &self,
-        query_words: &Vec<String>,
-        cand_words: &FnvHashSet<String>,
-    ) -> Option<f32> {
-        let (mut query_vec, nf) = self.word_vecs.as_ref().unwrap().get_combined_vec(
-            &query_words,
-            &self.terms_relevance,
-            &self.stopwords,
-        );
+    fn cosine_distance(&self, query_words: &Vec<String>, cand_words: &Vec<String>) -> Option<f32> {
+        let (mut query_vec, nf, _nf_query_words) = self
+            .word_vecs
+            .as_ref()
+            .unwrap()
+            .get_combined_vec(&query_words, &self.terms_relevance, &self.stopwords);
 
         if nf == query_words.len() {
             return None;
         }
 
-        let cand_words = cand_words.iter().map(|w| w.to_string()).collect();
-        let (mut cand_vec, nf) = self.word_vecs.as_ref().unwrap().get_combined_vec(
+        let (mut cand_vec, nf, _nf_cand_words) = self.word_vecs.as_ref().unwrap().get_combined_vec(
             &cand_words,
             &self.terms_relevance,
             &self.stopwords,
@@ -753,7 +771,7 @@ impl<'a> Qpick<'a> {
         }
 
         let mut dist_results: Vec<DistanceResult> = vec![];
-        let (_, _, _, words, wrs, _) = ngrams::parse(
+        let (_, _, _, words, wrs, _, word_syns) = ngrams::parse(
             &query,
             &self.synonyms,
             &self.stopwords,
@@ -761,19 +779,15 @@ impl<'a> Qpick<'a> {
             ngrams::ParseMode::Search,
         );
 
-        let words_index = words
-            .iter()
-            .enumerate()
-            .map(|(i, w)| (w.to_string(), i))
-            .collect::<FnvHashMap<String, usize>>();
+        let (words_index, words_set) = index_words(&words, &word_syns);
 
-        let words_set = words
+        let cand_synonyms: FnvHashMap<String, String> = word_syns
             .iter()
-            .map(|w| w.to_string())
-            .collect::<FnvHashSet<String>>();
+            .map(|(wid, syn)| (syn.to_string(), words[*wid].to_string()))
+            .collect();
 
         for (cid, cand_query) in candidates.into_iter().enumerate() {
-            let (_, _, _, cand_words, cand_wrs, _) = ngrams::parse(
+            let (_, _, _, cand_words, cand_wrs, _, _) = ngrams::parse(
                 &cand_query,
                 &self.synonyms,
                 &self.stopwords,
@@ -784,7 +798,7 @@ impl<'a> Qpick<'a> {
             let mut words_rel_vec = vec![0.0; words.len()];
             for (cword_idx, cword) in cand_words.iter().enumerate() {
                 if let Some(word_idx) = words_index.get(cword) {
-                    words_rel_vec[*word_idx] = util::min(wrs[*word_idx], cand_wrs[cword_idx]);
+                    words_rel_vec[*word_idx] += util::min(wrs[*word_idx], cand_wrs[cword_idx]);
                 }
             }
 
@@ -794,8 +808,17 @@ impl<'a> Qpick<'a> {
             });
             let keyword_dist = util::max(1.0 - sim, 0.0);
 
-            let cosine_dist =
-                self.cosine_diff_distance(&words_set, &words, &cand_query, keyword_dist);
+            let (cand_words, match_words, miss_words, excess_words) =
+                ngrams::match_queries(cand_query, &words_set, &cand_synonyms);
+
+            let cosine_dist = self.cosine_diff_distance(
+                &words,
+                &cand_words,
+                &match_words,
+                &miss_words,
+                &excess_words,
+                keyword_dist,
+            );
 
             dist_results.push(DistanceResult {
                 query: cand_query.to_string(),
@@ -815,7 +838,7 @@ impl<'a> Qpick<'a> {
             return vec![];
         }
 
-        let (ngrams, trs, ngrams_ids, words, wrs, must_have) = ngrams::parse(
+        let (ngrams, trs, ngrams_ids, words, wrs, must_have, synonyms) = ngrams::parse(
             &query,
             &self.synonyms,
             &self.stopwords,
@@ -830,6 +853,7 @@ impl<'a> Qpick<'a> {
             words,
             wrs,
             must_have,
+            synonyms,
             Some(count as usize),
             with_tfidf,
         ) {
