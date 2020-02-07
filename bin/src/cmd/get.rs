@@ -10,7 +10,7 @@ const USAGE: &'static str = "
 Get vector ids and scores for ANN.
 
 Usage:
-    qpick get [options] <query> <count> [--without-tfidf]
+    qpick get [options] <query> <count> [--with-tfidf]
     qpick get --help
 
 Options:
@@ -25,7 +25,7 @@ struct Args {
     flag_end: Option<u32>,
     arg_query: String,
     arg_count: u32,
-    flag_without_tfidf: bool,
+    flag_with_tfidf: bool,
 }
 
 pub fn run(argv: Vec<String>) -> Result<(), Error> {
@@ -50,7 +50,7 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         qpick = qpick::Qpick::from_path("./index".to_string());
     }
 
-    let r = qpick.get(&args.arg_query, args.arg_count, !args.flag_without_tfidf);
+    let r = qpick.get(&args.arg_query, args.arg_count, args.flag_with_tfidf);
 
     let v: Vec<(u64, Option<f32>, f32, String)> = r
         .iter()
