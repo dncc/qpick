@@ -156,8 +156,26 @@ pub fn u8_normalize_umlauts<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str>
 }
 
 #[inline]
+pub fn separate_digits<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> {
+    lazy_static! {
+        // splits numbers from the rest of the string
+        static ref RE_DIG: regex::Regex = regex::Regex::new(r"(?x)
+            (?P<b>[[:alpha:]]{2,}|\s|^) # (at least 2 letters in front OR a space OR it's the beginning) AND
+            (?P<d>\d{2,})               # at least 2 digits AND
+            (?P<e>[^\d]|$)              # followed by non digits or the end of the string.
+        ").unwrap();
+    }
+
+    Cow::Owned(RE_DIG.replace_all(&input.into(), "$b $d $e").to_string())
+}
+
+#[inline]
 pub fn normalize(query: &str) -> String {
-    u8_normalize_umlauts(u8_find_and_replace(query).trim().to_lowercase()).to_string()
+    separate_digits(u8_normalize_umlauts(
+        u8_find_and_replace(query).to_lowercase(),
+    ))
+    .trim()
+    .to_string()
 }
 
 #[inline]
@@ -199,6 +217,10 @@ fn suffix_synonyms(
     suffix_letters: &mut Vec<(usize, String)>,
     synonyms: &mut FnvHashMap<usize, String>,
 ) {
+    if suffix_letters.is_empty() {
+        return;
+    }
+
     for (word_idx, word) in words.iter().enumerate() {
         let mut synonym = String::with_capacity(word.len() + suffix_letters.len());
         synonym.push_str(word);
@@ -628,7 +650,10 @@ pub fn get_stop_ngrams(
             // neither j, nor k are stopwords
             } else {
                 if linked_words.contains(&words[k])
-                    || words[j].len() >= 4 * words[k].len() && !linked_idx.contains(&j)
+                    || !linked_idx.contains(&j)
+                        && (words[j].len() >= 4 * words[k].len()
+                            || words[*i].len() == 1
+                                && (rels[j] > rels[k] || words[k].chars().all(char::is_numeric)))
                 {
                     update_linked(&vec![*i, j], &words, &mut linked_idx, &mut linked_words);
                     stop_ngrams.update(&words, &rels, vec![j, *i], &synonyms);
@@ -1123,7 +1148,7 @@ pub fn match_queries(
     words_set: &FnvHashSet<String>,
     cand_synonyms: &FnvHashMap<String, String>,
 ) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
-    let cand_words = u8_find_and_replace(cand_query)
+    let cand_words = normalize(cand_query)
         .clone()
         .split(" ")
         .filter(|w| w.len() > 1 || (w.len() == 1 && w.chars().next().unwrap().is_digit(10)))
@@ -1171,6 +1196,14 @@ mod tests {
     use util::*;
 
     #[test]
+    fn test_suffix_words() {
+        let q = "@xel en e x";
+        let e = vec!["xelenex"];
+        let (words, _) = get_norm_query_vec(q, &None, ParseMode::Search);
+        assert_eq!(words, e);
+    }
+
+    #[test]
     fn test_u8_find_and_replace() {
         let q = "'Here's@#An ##example!";
         let e = "heres  an   example";
@@ -1186,6 +1219,37 @@ mod tests {
 
         let q = "root_type hubspot";
         let e = "root type hubspot";
+        assert_eq!(normalize(q), e);
+    }
+
+    #[test]
+    fn test_separate_digits() {
+        let q = "123movies123free";
+        let e = "123 movies 123 free";
+        assert_eq!(normalize(q), e);
+
+        let q = "ormlite h2";
+        let e = "ormlite h2";
+        assert_eq!(normalize(q), e);
+
+        let q = "peer2peer";
+        let e = "peer2peer";
+        assert_eq!(normalize(q), e);
+
+        let q = "peer22peer";
+        let e = "peer 22 peer";
+        assert_eq!(normalize(q), e);
+
+        let q = "friends s01 e01 stream";
+        let e = "friends s01 e01 stream";
+        assert_eq!(normalize(q), e);
+
+        let q = "laptop-ersatzteile24";
+        let e = "laptop ersatzteile 24";
+        assert_eq!(normalize(q), e);
+
+        let q = "ersatzteile24 laptop";
+        let e = "ersatzteile 24  laptop";
         assert_eq!(normalize(q), e);
     }
 
@@ -1215,8 +1279,8 @@ mod tests {
         assert_eq!(suffix_letters, e_suffix_letters);
 
         let q = "caddy14 d ersatzteile";
-        let e_words = vec!["caddy14", "ersatzteile"];
-        let e_synonyms = vec![(0, "caddy14d")]
+        let e_words = vec!["caddy", "14", "ersatzteile"];
+        let e_synonyms = vec![(1, "14d")]
             .into_iter()
             .map(|(i, s)| (i, s.to_string()))
             .collect::<FnvHashMap<usize, String>>();
@@ -1225,7 +1289,7 @@ mod tests {
         assert_eq!(synonyms, e_synonyms);
 
         let q = "caddy14 d ersatzteile";
-        let e_words = vec!["caddy14", "ersatzteile"];
+        let e_words = vec!["caddy", "14", "ersatzteile"];
         let e_synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
         let (words, synonyms) = get_norm_query_vec(q, &None, ParseMode::Index);
         assert_eq!(words, e_words);
@@ -1287,6 +1351,32 @@ mod tests {
         };
 
         let mode = ParseMode::Index;
+
+        let q = "watch the magicians season 4 free 123";
+        let e = vec!["watch", "magicians the", "4 season", "free", "123"];
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
+
+        let q = "watch the magicians season 4 episode 1 free 123";
+        let e = vec![
+            "watch",
+            "magicians the",
+            "4 season",
+            "1 episode",
+            "free",
+            "123",
+        ];
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
+
+        let q = "watch the magicians season 4 episode 1 123movies";
+        let e = vec![
+            "watch",
+            "magicians the",
+            "4 season",
+            "1 episode",
+            "123",
+            "movies",
+        ];
+        assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "ormlite callintransaction and h2";
         let e = vec!["ormlite", "and callintransaction", "h2"];
@@ -1364,7 +1454,7 @@ mod tests {
         assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "caddy14 d ersatzteile";
-        let e = vec!["caddy14", "ersatzteile"];
+        let e = vec!["caddy", "14", "ersatzteile"];
         assert_eq!(get_stop_ngrams_test(q, &tr_map, &stopwords, mode), e);
 
         let q = "who was the first to invent bicycle";
@@ -1578,7 +1668,7 @@ mod tests {
             vec![0],
             vec![
                 "cisco",
-                "4500e",
+                "4500",
                 "power",
                 "supply",
                 "configuration",
@@ -1587,7 +1677,7 @@ mod tests {
             vec![
                 ("power supply", vec![2, 3]),
                 ("manager power", vec![2, 5]),
-                ("4500e manager", vec![1, 5]),
+                ("4500 manager", vec![1, 5]),
                 ("manager supply", vec![3, 5]),
                 ("configuration power", vec![2, 4]),
                 ("configuration supply", vec![3, 4]),
@@ -1596,12 +1686,12 @@ mod tests {
                 ("cisco manager", vec![0, 5]),
                 ("cisco power", vec![0, 2]),
                 ("cisco supply", vec![0, 3]),
-                ("4500e cisco supply", vec![0, 1, 3]),
-                ("4500e configuration", vec![1, 4]),
-                ("4500e cisco", vec![0, 1]),
-                ("4500e supply", vec![1, 3]),
-                ("4500e power", vec![1, 2]),
-                ("4500e", vec![1]),
+                ("4500 cisco supply", vec![0, 1, 3]),
+                ("4500 configuration", vec![1, 4]),
+                ("4500 cisco", vec![0, 1]),
+                ("4500 supply", vec![1, 3]),
+                ("4500 power", vec![1, 2]),
+                ("4500", vec![1]),
             ],
         );
 
@@ -1811,8 +1901,13 @@ mod tests {
             &tr_map,
             ParseMode::Index,
             vec![0],
-            vec!["caddy14", "ersatzteile"],
-            vec![("caddy14", vec![0]), ("caddy14 ersatzteile", vec![0, 1])],
+            vec!["caddy", "14", "ersatzteile"],
+            vec![
+                ("caddy ersatzteile", vec![0, 2]),
+                ("14 ersatzteile", vec![1, 2]),
+                ("14 caddy", vec![0, 1]),
+                ("caddy", vec![0]),
+            ],
         );
 
         // search mode!
@@ -1823,14 +1918,17 @@ mod tests {
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![0],
-            vec!["caddy14", "ersatzteile"],
-            // TODO fix: should have also ("caddy14d erzatzteile", vec![0, 1]),
+            vec![],
+            vec!["caddy", "14", "ersatzteile"],
             vec![
-                ("caddy14d", vec![0]),
-                ("caddy14", vec![0]),
-                ("caddy14 ersatzteile", vec![0, 1]),
-                ("caddy14d ersatzteile", vec![0, 1]),
+                ("caddy", vec![0]),
+                ("14d caddy", vec![1, 0]),
+                ("14d", vec![1]),
+                ("14", vec![1]),
+                ("14 caddy", vec![0, 1]),
+                ("caddy ersatzteile", vec![0, 2]),
+                ("14d ersatzteile", vec![1, 2]),
+                ("14 ersatzteile", vec![1, 2]),
             ],
         );
 
@@ -1844,7 +1942,6 @@ mod tests {
             ParseMode::Search,
             vec![0],
             vec!["pokemon", "best", "vs", "rock"],
-            // TODO fix: should have also ("caddy14d erzatzteile", vec![0, 1]),
             vec![
                 ("best rock", vec![1, 3]),
                 ("against rock", vec![2, 3]),

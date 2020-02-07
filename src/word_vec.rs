@@ -11,7 +11,7 @@ use ngrams::MISS_WORD_REL;
 use std::mem::MaybeUninit;
 use util;
 
-pub const DIM: usize = 300; // TODO in the config!
+pub const DIM: usize = 300; // TODO move to the config
 pub const UPPER_COS_BOUND: f32 = 1.0;
 
 #[inline]
@@ -185,8 +185,6 @@ impl<'a> WordVecs<'a> {
             self.word_dict
                 .get_words_ids(words, words_relevances, stopwords);
 
-        // let mult: bool = word_ids_rels.len() > 1;
-        let not_found = words.len() - word_ids_rels.len();
         let words_vec = word_ids_rels
             .iter()
             .fold([0.0; DIM], |mut data, (i, word_rel)| {
@@ -202,11 +200,7 @@ impl<'a> WordVecs<'a> {
             })
             .to_vec();
 
-        // if mult {
-        // normalize(&mut words_vec);
-        // }
-
-        (words_vec, not_found, not_found_words)
+        (words_vec, not_found_words.len(), not_found_words)
     }
 
     #[inline]

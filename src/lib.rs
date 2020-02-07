@@ -88,7 +88,7 @@ macro_rules! impl_partial_ord {
 }
 
 pub const DIST_THRESH: f32 = 0.951; // take only queries with smaller distance [0, 1]
-pub const FETCH_MIN: usize = 100; // get at least this many keyword matched results
+pub const FETCH_MIN: usize = 200; // get at least this many keyword matched results
 
 make_static_var_and_getter!(_get_shard_size, SHARD_SIZE, usize);
 
@@ -685,6 +685,11 @@ impl<'a> Qpick<'a> {
 
             word_vec::normalize(&mut excess_vec[..]);
             word_vec::normalize(&mut missing_vec[..]);
+            let cos_dist = word_vec::cosine_distance(&excess_vec, &missing_vec);
+
+            if missing_len > match_len || excess_len > match_len {
+                return Some(util::min(cos_dist * (1.0 + keyword_dist), 1.0));
+            }
 
             return Some(word_vec::cosine_distance(&excess_vec, &missing_vec));
         }
@@ -698,15 +703,51 @@ impl<'a> Qpick<'a> {
 
         // if no missing words, cosine dist
         if nf_miss == missing_len {
-            return self.cosine_distance(words, &cand_words);
+            if let Some(cos_dist) = self.cosine_distance(words, &cand_words) {
+                let nf = (nf_excs + nf_match + nf_miss) as f32;
+                let nr_miss = (missing_len + excess_len) as f32;
+
+                if match_len >= 2 && missing_len == 0 && excess_len < 2 && keyword_dist < 0.3 {
+                    return Some(cos_dist * keyword_dist);
+                }
+
+                if match_len >= 2
+                    && match_len > missing_len
+                    && match_len > excess_len
+                    && keyword_dist < 0.45
+                    && nf <= 1.0
+                {
+                    return Some(cos_dist * (keyword_dist / (keyword_dist + cos_dist)));
+                }
+
+                return Some(util::min(cos_dist + nf * keyword_dist / nr_miss, 1.0));
+            }
+
+            return None;
         }
 
         if nf_excs == excess_len {
             if let Some(cos_dist) = self.cosine_distance(words, &cand_words) {
-                if match_len > 2 && keyword_dist < 0.3 {
-                    return Some(1.0 / match_len as f32 * cos_dist);
+                let nf = (nf_excs + nf_match + nf_miss) as f32;
+                let nr_miss = (missing_len + excess_len) as f32;
+
+                if match_len >= 2 && missing_len < 2 && excess_len == 0 && keyword_dist < 0.3 {
+                    return Some(cos_dist * keyword_dist);
                 }
+
+                if match_len >= 2
+                    && match_len > excess_len
+                    && match_len > missing_len
+                    && keyword_dist < 0.45
+                    && nf <= 1.0
+                {
+                    return Some(cos_dist * (keyword_dist / (keyword_dist + cos_dist)));
+                }
+
+                return Some(util::min(cos_dist + nf * keyword_dist / nr_miss, 1.0));
             }
+
+            return None;
         }
 
         let mut lhs_match_vec = rhs_match_vec.clone();
@@ -719,22 +760,41 @@ impl<'a> Qpick<'a> {
             word_vec::subtract(&mut rhs_match_vec, &excess_vec);
         }
 
+        word_vec::normalize(&mut missing_vec[..]);
+        word_vec::normalize(&mut excess_vec[..]);
+        let me_cos_dist = word_vec::cosine_distance(&missing_vec, &excess_vec);
+
         word_vec::normalize(&mut lhs_match_vec[..]);
         word_vec::normalize(&mut rhs_match_vec[..]);
 
         let cos_dist = word_vec::cosine_distance(&lhs_match_vec, &rhs_match_vec);
 
-        // only one missing and excess word and keyword distance is too large
-        if excess_len == 1 && missing_len == 1 && match_len > 1 && keyword_dist > 0.4 {
-            return Some(1.25 * cos_dist);
+        let thresh: f32;
+        if missing_len > 1 {
+            if excess_len < 2 {
+                thresh = 0.5;
+            } else {
+                thresh = 0.45;
+            };
+        } else {
+            if excess_len < 2 {
+                thresh = 0.55;
+            } else {
+                thresh = 0.65;
+            };
+        };
+
+        // missing and excess words and keyword distance is too large
+        if excess_len >= 1 && missing_len >= 1 && match_len <= 2 && keyword_dist > 0.45 {
+            return Some(1.3 * cos_dist + util::max(0.0, me_cos_dist - thresh));
         }
 
-        // more than one excess, at least one missing and keyword distance is not so big
-        if excess_len > 1 && missing_len == 1 && match_len > 1 && keyword_dist < 0.6 {
-            return Some(0.75 * cos_dist);
+        // more than one excess, at most one missing, keyword distance is not so big
+        if excess_len <= 2 && missing_len <= 2 && match_len > excess_len && keyword_dist <= 0.45 {
+            return Some(0.75 * cos_dist + util::max(0.0, me_cos_dist - thresh));
         }
 
-        Some(cos_dist)
+        Some(cos_dist + util::max(0.0, me_cos_dist - thresh))
     }
 
     #[inline]
