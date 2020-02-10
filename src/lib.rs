@@ -91,9 +91,42 @@ fn get_addr_and_len(ngram: &str, map: &fst::Map) -> Option<(u64, u64)> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct Distance {
+    pub query_id: u64,
+    pub keyword: f32,
+    pub cosine: Option<f32>,
+}
+
+impl PartialOrd for Distance {
+    #[inline]
+    fn partial_cmp(&self, other: &Distance) -> Option<Ordering> {
+        if self.eq(&other) {
+            self.query_id.partial_cmp(&other.query_id)
+        } else {
+            if self.cosine == None || other.cosine == None {
+                self.keyword.partial_cmp(&other.keyword)
+            } else {
+                self.cosine.partial_cmp(&other.cosine)
+            }
+        }
+    }
+}
+
+impl PartialEq for Distance {
+    #[inline]
+    fn eq(&self, other: &Distance) -> bool {
+        if self.cosine == None || other.cosine == None {
+            self.keyword == other.keyword
+        } else {
+            self.cosine == other.cosine
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DistanceResult {
     pub query: String,
-    pub dist: f32,
+    pub dist: Distance,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -150,7 +183,7 @@ impl SearchShardResult {
 pub struct SearchResult {
     pub query_id: u64, // query id unique globally
     pub query: Option<String>,
-    pub dist: f32,
+    pub dist: Distance,
 }
 
 struct ShardResults {
@@ -509,7 +542,11 @@ impl Qpick {
 
                 SearchResult {
                     query_id: m.query_id,
-                    dist: m.dist,
+                    dist: Distance {
+                        query_id: m.query_id,
+                        keyword: m.dist,
+                        cosine: None,
+                    },
                     query: mquery,
                 }
             })
@@ -539,7 +576,7 @@ impl Qpick {
             .map(|(n, r)| (n.to_string(), *r))
             .collect::<FnvHashMap<String, f32>>();
 
-        for cand_query in candidates.into_iter() {
+        for (cid, cand_query) in candidates.into_iter().enumerate() {
             let (cand_ngrams, ctrs, _, _, _, _) = ngrams::parse(
                 &cand_query,
                 &self.synonyms,
@@ -573,7 +610,11 @@ impl Qpick {
 
             dist_results.push(DistanceResult {
                 query: cand_query.to_string(),
-                dist: dist,
+                dist: Distance {
+                    query_id: cid as u64,
+                    keyword: dist,
+                    cosine: None,
+                },
             });
         }
 
@@ -617,7 +658,13 @@ impl Qpick {
         let mut res: Vec<(u64, f32, String)> = self
             .get(query, 30 * count, with_tfidf)
             .into_iter()
-            .map(|r| (r.query_id, r.dist, r.query.unwrap_or("".to_string())))
+            .map(|r| {
+                (
+                    r.query_id,
+                    r.dist.keyword,
+                    r.query.unwrap_or("".to_string()),
+                )
+            })
             .collect();
         res.truncate(count as usize);
 
