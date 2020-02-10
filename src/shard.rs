@@ -3,12 +3,13 @@ use std::fs::{read_dir, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::Error;
 use std::io::{BufReader, BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use config;
 use ngrams;
 use stopwords;
 use stringvec;
+use synonyms;
 use util;
 use util::{BRED, BYELL, ECOL};
 
@@ -100,6 +101,13 @@ pub fn shard(
         .join("")),
     };
 
+    let synonyms_path = PathBuf::from(&output_dir).join(&c.synonyms_file);
+    let synonyms_dict = if synonyms_path.is_file() {
+        Some(synonyms::load(&synonyms_path).unwrap())
+    } else {
+        None
+    };
+
     let (sender, receiver): (Sender<u64>, Receiver<u64>) = mpsc::channel();
 
     let queries_path = &Path::new(&queries_path);
@@ -120,6 +128,7 @@ pub fn shard(
     for worker_id in 0..number_of_workers {
         let sender = sender.clone();
         let stopwords = stopwords.clone();
+        let synonyms_dict = synonyms_dict.clone();
         let queries_parts = queries_parts.clone();
         let valid_prefixes = valid_prefixes.clone();
         let output_dir = output_dir.to_string().clone();
@@ -206,13 +215,14 @@ pub fn shard(
                         continue;
                     }
 
-                    let (ngrams, trs, _, _, _, _) = &ngrams::parse(
+                    let (ngrams, trs, _, _, _, _, _) = &ngrams::parse(
                         &query,
-                        &None,
+                        &synonyms_dict,
                         &stopwords,
                         &tr_map,
                         ngrams::ParseMode::Index,
                     );
+
                     let ngrams_trs: FnvHashMap<_, _> =
                         ngrams.into_iter().zip(trs.into_iter()).collect();
                     for (ngram, sc) in ngrams_trs {

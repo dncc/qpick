@@ -14,6 +14,9 @@ pub struct Config {
     pub stopwords_file: String,
     pub synonyms_file: String,
     pub i2q_file: String,
+    pub words_file: String,
+    pub word_vecs_file: String,
+    pub use_word_vectors: bool,
 }
 
 impl Config {
@@ -56,12 +59,12 @@ impl Config {
 
         let terms_relevance_file = match config["terms_relevance_file"] {
             Value::String(ref terms_relevance_file) => terms_relevance_file.as_str(),
-            _ => panic!("Failed to load terms relevance file name from the config!"),
+            _ => panic!("Failed to parse terms relevance file name from the config!"),
         };
 
         let stopwords_file = match config["stopwords_file"] {
             Value::String(ref stopwords_file) => stopwords_file.as_str(),
-            _ => panic!("Failed to load stopwords file name from the config!"),
+            _ => panic!("Failed to parse stopwords file name from the config!"),
         };
 
         let synonyms_file = match config["synonyms_file"] {
@@ -74,6 +77,21 @@ impl Config {
             _ => "",
         };
 
+        let words_file = match config["words_file"] {
+            Value::String(ref words_file) => words_file.as_str(),
+            _ => "",
+        };
+
+        let word_vecs_file = match config["word_vecs_file"] {
+            Value::String(ref word_vecs_file) => word_vecs_file.as_str(),
+            _ => "",
+        };
+
+        let use_word_vectors = match config["use_word_vectors"] {
+            Value::Bool(use_words_vectors) => use_words_vectors,
+            _ => panic!("Failed to parse use_words_vectors flag from the config!"),
+        };
+
         Config {
             id_size: id_size as usize,
             bucket_size: bucket_size as usize,
@@ -83,6 +101,9 @@ impl Config {
             synonyms_file: synonyms_file.to_string(),
             stopwords_file: stopwords_file.to_string(),
             i2q_file: i2q_file.to_string(),
+            words_file: words_file.to_string(),
+            word_vecs_file: word_vecs_file.to_string(),
+            use_word_vectors: use_word_vectors,
         }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "qpick-bin"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["dcvetinovic@gmail.com"]
 description = """
 A command line tool for using with qpick library.
@@ -14,7 +14,7 @@ serde = "1"
 serde_derive = "1"
 fst = "0.2"
 docopt = "0.8"
-qpick = { path = "..", version = "0.7.0" }
+qpick = { path = "..", version = "0.8.0" }
 
 [profile.release]
 debug = true

@@ -139,7 +139,7 @@ pub extern "C" fn qpick_compile_i2q(file_path: *mut libc::c_char, output_dir: *m
 // `#[no_mangle]` warns for lifetime parameters,
 // a known issue: https://github.com/rust-lang/rust/issues/40342
 #[no_mangle]
-pub extern "C" fn qpick_init(path: *mut libc::c_char) -> *mut Qpick {
+pub extern "C" fn qpick_init(path: *mut libc::c_char) -> *mut Qpick<'static> {
     let path = cstr_to_str(path);
     let qpick = Qpick::from_path(path.to_string());
     to_raw_ptr(qpick)
@@ -150,7 +150,7 @@ pub extern "C" fn qpick_init_with_shard_range(
     path: *mut libc::c_char,
     start_shard: libc::uint32_t,
     end_shard: libc::uint32_t,
-) -> *mut Qpick {
+) -> *mut Qpick<'static> {
     let path = cstr_to_str(path);
     let qpick = Qpick::from_path_with_shard_range(path.to_string(), start_shard..end_shard);
     to_raw_ptr(qpick)
@@ -204,6 +204,7 @@ pub extern "C" fn qpick_search_iter_next(ptr: *mut qpick::SearchResults) -> *mut
 
 make_free_fn!(qpick_search_results_free, *mut qpick::SearchResults);
 make_free_fn!(qpick_search_item_free, *mut QpickSearchItem);
+make_free_fn!(qpick_distance_free, *mut QpickDistance);
 
 // ------ dist iterator ---
 
@@ -233,7 +234,6 @@ pub extern "C" fn qpick_dist_iter_next(ptr: *mut qpick::DistResults) -> *mut Qpi
 
 make_free_fn!(qpick_dist_results_free, *mut qpick::DistResults);
 make_free_fn!(qpick_dist_item_free, *mut QpickDistItem);
-make_free_fn!(qpick_distance_free, *mut QpickDistance);
 
 // --- end iterators ---
 

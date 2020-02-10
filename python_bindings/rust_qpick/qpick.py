@@ -47,7 +47,7 @@ class QpickSearchResults(QpickResults):
         query_id = item.query_id
         dist = item.dist
         keyword_dist = dist.keyword
-        cosine_dist = None if dist.cosine == -1 else dist.cosine
+        cosine_dist = None if dist.cosine == -1.0 else dist.cosine
         query = ffi.string(item.query).decode('utf8')
 
         self._free_item_fn(item)
@@ -65,7 +65,7 @@ class QpickDistResults(QpickResults):
         query = ffi.string(item.query).decode('utf8')
         dist = item.dist
         keyword_dist = dist.keyword
-        cosine_dist = None if dist.cosine == -1 else dist.cosine
+        cosine_dist = None if dist.cosine == -1.0 else dist.cosine
 
         self._free_item_fn(item)
         self._free_dist_fn(dist)
@@ -137,6 +137,7 @@ class Qpick(object):
                                 lib.qpick_dist_results_free,
                                 lib.qpick_dist_item_free,
                                 lib.qpick_distance_free)
+
 
 def shard(file_path, nr_shards, output_dir, prefixes=[], create_i2q=True):
     if type(file_path) == str:

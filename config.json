@@ -6,5 +6,8 @@
     "terms_relevance_file": "terms_relevance.fst",
     "stopwords_file": "stopwords.txt",
     "synonyms_file": "synonyms.txt",
+    "words_file": "/run/shm/qpick/vocab.txt",
+    "word_vecs_file": "/run/shm/qpick/vectors.bin",
+    "use_word_vectors": true,
     "i2q_file": "i2q"
 }

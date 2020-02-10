@@ -50,7 +50,7 @@ pub fn run(argv: Vec<String>) -> Result<(), Error> {
         qpick = qpick::Qpick::from_path("./index".to_string());
     }
 
-    let r = qpick.get(&args.arg_query, args.arg_count, !args.flag_with_tfidf);
+    let r = qpick.get(&args.arg_query, args.arg_count, args.flag_with_tfidf);
 
     let v: Vec<(u64, Option<f32>, f32, String)> = r
         .iter()

@@ -11,7 +11,7 @@ ffi.cdef("""
     void string_free(char*);
 
     /**
-        Search Iterator
+       Search Iterator
     **/
 
     typedef struct {

@@ -1,16 +1,20 @@
 #[macro_use]
 extern crate lazy_static;
+extern crate blas;
 extern crate byteorder;
 extern crate fst;
 extern crate libc;
+extern crate openblas_src;
 #[macro_use]
 extern crate serde_derive;
 extern crate flate2;
 extern crate fnv;
 extern crate fs2;
 extern crate memmap;
+extern crate num;
 extern crate pbr;
 extern crate rand;
+extern crate rayon;
 extern crate regex;
 extern crate serde_json;
 
@@ -39,8 +43,12 @@ pub mod shard;
 pub mod stopwords;
 pub mod stringvec;
 pub mod synonyms;
+pub mod word_vec;
 
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelIterator;
 use util::{BRED, BYELL, ECOL};
+use word_vec::WordVecs;
 
 macro_rules! make_static_var_and_getter {
     ($fn_name: ident, $var_name: ident, $t: ty) => {
@@ -57,12 +65,30 @@ macro_rules! make_static_var_and_getter {
     };
 }
 
-extern crate rayon;
-use rayon::iter::IntoParallelRefIterator;
-use rayon::iter::ParallelIterator;
+macro_rules! impl_partial_ord {
+    ($struct: ty, $eq_var: ident, $cmp_var: ident) => {
+        impl PartialOrd for $struct {
+            #[inline]
+            fn partial_cmp(&self, other: &$struct) -> Option<Ordering> {
+                if self.eq(&other) {
+                    self.$eq_var.partial_cmp(&other.$eq_var)
+                } else {
+                    self.$cmp_var.partial_cmp(&other.$cmp_var)
+                }
+            }
+        }
+
+        impl PartialEq for $struct {
+            #[inline]
+            fn eq(&self, other: &$struct) -> bool {
+                self.$cmp_var == other.$cmp_var
+            }
+        }
+    };
+}
 
 pub const DIST_THRESH: f32 = 0.951; // take only queries with smaller distance [0, 1]
-pub const FETCH_MIN: usize = 100; // get at least this many keyword matched results
+pub const FETCH_MIN: usize = 200; // get at least this many keyword matched results
 
 make_static_var_and_getter!(_get_shard_size, SHARD_SIZE, usize);
 
@@ -185,6 +211,7 @@ pub struct SearchResult {
     pub query: Option<String>,
     pub dist: Distance,
 }
+impl_partial_ord!(SearchResult, query_id, dist);
 
 struct ShardResults {
     results: Vec<SearchShardResult>,
@@ -195,22 +222,7 @@ pub struct KeywordMatchResult {
     pub query_id: u64, // query id unique globally
     pub dist: f32,
 }
-
-impl PartialOrd for KeywordMatchResult {
-    fn partial_cmp(&self, other: &KeywordMatchResult) -> Option<Ordering> {
-        if self.eq(&other) {
-            self.query_id.partial_cmp(&other.query_id)
-        } else {
-            self.dist.partial_cmp(&other.dist)
-        }
-    }
-}
-
-impl PartialEq for KeywordMatchResult {
-    fn eq(&self, other: &KeywordMatchResult) -> bool {
-        self.dist == other.dist
-    }
-}
+impl_partial_ord!(KeywordMatchResult, query_id, dist);
 
 #[inline]
 fn _get_idfs(ngrams: &Vec<(String, usize)>, map: &fst::Map) -> FnvHashMap<String, (usize, f32)> {
@@ -273,7 +285,31 @@ fn get_shard_results(
     Ok(ShardResults { results: sres })
 }
 
-pub struct Qpick {
+#[inline]
+fn index_words(
+    words: &Vec<String>,
+    synonyms: &FnvHashMap<usize, String>,
+) -> (FnvHashMap<String, usize>, FnvHashSet<String>) {
+    let mut words_set: FnvHashSet<String> = FnvHashSet::default();
+    let mut words_index = words
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            words_set.insert(w.to_string());
+
+            (w.to_string(), i)
+        })
+        .collect::<FnvHashMap<String, usize>>();
+
+    for (word_idx, syn) in synonyms {
+        // add synonyms to the index, but not to the words set
+        words_index.insert(syn.to_string(), *word_idx);
+    }
+
+    (words_index, words_set)
+}
+
+pub struct Qpick<'a> {
     path: String,
     config: config::Config,
     synonyms: Option<FnvHashMap<String, String>>,
@@ -284,6 +320,7 @@ pub struct Qpick {
     id_size: usize,
     i2q_loaded: bool,
     shard_num: usize,
+    word_vecs: Option<WordVecs<'a>>,
 }
 
 pub struct Shard {
@@ -326,8 +363,8 @@ impl SearchResults {
     }
 }
 
-impl Qpick {
-    fn new(path: String, shard_range_opt: Option<Range<u32>>) -> Qpick {
+impl<'a> Qpick<'a> {
+    fn new(path: String, shard_range_opt: Option<Range<u32>>) -> Qpick<'a> {
         let c = config::Config::init(path.clone());
         let id_size = c.id_size;
         unsafe {
@@ -418,6 +455,15 @@ impl Qpick {
             .fold(true, |b, (is_loaded, _)| b && *is_loaded);
         let shards = shards.into_iter().map(|(_, s)| s).collect();
 
+        let mut word_vecs = None;
+        if c.use_word_vectors {
+            let words_path = PathBuf::from(&c.words_file);
+            let word_vecs_path = PathBuf::from(&c.word_vecs_file);
+            if words_path.is_file() && word_vecs_path.is_file() {
+                word_vecs = Some(WordVecs::load(&words_path, &word_vecs_path));
+            }
+        }
+
         Qpick {
             config: c,
             path: path,
@@ -429,6 +475,7 @@ impl Qpick {
             id_size: id_size,
             i2q_loaded: i2q_loaded,
             shard_num: shard_num,
+            word_vecs: word_vecs,
         }
     }
 
@@ -469,6 +516,7 @@ impl Qpick {
         words: Vec<String>,
         wrs: Vec<f32>,
         must_have: Vec<usize>,
+        synonyms: FnvHashMap<usize, String>,
         count: Option<usize>,
         with_tfidf: bool,
     ) -> Result<Vec<SearchResult>, Error> {
@@ -505,6 +553,7 @@ impl Qpick {
                         words_rel_vec[*word_idx] = wrs[*word_idx] * r.weight_rel;
                     }
                 }
+
                 ids_map
                     .entry(r.query_id)
                     .or_insert((r.shard_query_id, r.shard_id));
@@ -520,40 +569,260 @@ impl Qpick {
                     sum
                 });
 
-                (query_id, util::max(1.0 - similarity, 0.0))
+                (query_id, util::max(1.0 - similarity, 0.0), words_rel_vec)
             })
-            .filter(|(_, dist)| *dist < DIST_THRESH)
-            .map(|(query_id, dist)| KeywordMatchResult {
+            .filter(|(_, dist, _)| *dist < DIST_THRESH)
+            .map(|(query_id, dist, _)| KeywordMatchResult {
                 query_id: query_id,
                 dist: dist,
             })
             .collect::<Vec<KeywordMatchResult>>();
         keyword_matches.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
 
+        let (words_index, words_set) = index_words(&words, &synonyms);
+
+        let cand_synonyms: FnvHashMap<String, String> = synonyms
+            .iter()
+            .map(|(wid, syn)| (syn.to_string(), words[*wid].to_string()))
+            .collect();
+
         let mut search_results: Vec<SearchResult> = keyword_matches
             .into_iter()
             .take(util::max(count.unwrap_or(FETCH_MIN), FETCH_MIN))
             .map(|m| {
                 let (sh_qid, sh_id) = ids_map.get(&m.query_id).unwrap();
-                let mquery = self.shards[*sh_id as usize]
+                let cand_query = self.shards[*sh_id as usize]
                     .i2q
                     .as_ref()
-                    .map(|i2q| i2q[*sh_qid as usize].to_string());
+                    .map(|i2q| i2q[*sh_qid as usize].to_string())
+                    .unwrap_or(String::from(""));
+
+                let (cand_words, match_words, miss_words, excess_words) =
+                    ngrams::match_queries(&cand_query, &words_set, &cand_synonyms);
+
+                // check excess words and update keyword score
+                let mut keyword_dist = m.dist;
+                for eword in &excess_words {
+                    if let Some(word_idx) = words_index.get(eword) {
+                        keyword_dist = util::max(keyword_dist - (m.dist * wrs[*word_idx]), 0.0);
+                    }
+                }
+
+                let cosine_dist = self.cosine_diff_distance(
+                    &words,
+                    &cand_words,
+                    &match_words,
+                    &miss_words,
+                    &excess_words,
+                    keyword_dist,
+                );
+
+                let dist = Distance {
+                    query_id: m.query_id,
+                    keyword: keyword_dist,
+                    cosine: cosine_dist,
+                };
 
                 SearchResult {
                     query_id: m.query_id,
-                    dist: Distance {
-                        query_id: m.query_id,
-                        keyword: m.dist,
-                        cosine: None,
-                    },
-                    query: mquery,
+                    dist: dist,
+                    query: Some(cand_query),
                 }
             })
             .collect();
+        search_results.sort_by(|a, b| a.partial_cmp(&b).unwrap_or(Ordering::Less));
         search_results.truncate(count.unwrap_or(FETCH_MIN));
 
         Ok(search_results)
+    }
+
+    #[inline]
+    fn cosine_diff_distance(
+        &self,
+        words: &Vec<String>,
+        cand_words: &Vec<String>,
+        match_words: &Vec<String>,
+        miss_words: &Vec<String>,
+        excess_words: &Vec<String>,
+        keyword_dist: f32,
+    ) -> Option<f32> {
+        if self.word_vecs.is_none() {
+            return None;
+        }
+
+        let match_len = match_words.len();
+        let (mut rhs_match_vec, nf_match, _nf_match_words) = self
+            .word_vecs
+            .as_ref()
+            .unwrap()
+            .get_combined_vec(&match_words, &self.terms_relevance, &self.stopwords);
+
+        let missing_len = miss_words.len();
+        let excess_len = excess_words.len();
+
+        if miss_words.is_empty() && excess_words.is_empty() {
+            return Some(0.0);
+        }
+
+        let (mut missing_vec, nf_miss, _nf_miss_words) = self
+            .word_vecs
+            .as_ref()
+            .unwrap()
+            .get_combined_vec(&miss_words, &self.terms_relevance, &self.stopwords);
+        let (mut excess_vec, nf_excs, _nf_excs_words) = self
+            .word_vecs
+            .as_ref()
+            .unwrap()
+            .get_combined_vec(&excess_words, &self.terms_relevance, &self.stopwords);
+
+        // either no match words or none of them are found
+        if nf_match == match_len {
+            // no missing words or none of them found OR
+            // no excess words or none of them found
+            if nf_miss == missing_len || nf_excs == excess_len {
+                return None;
+            }
+
+            word_vec::normalize(&mut excess_vec[..]);
+            word_vec::normalize(&mut missing_vec[..]);
+            let cos_dist = word_vec::cosine_distance(&excess_vec, &missing_vec);
+
+            if missing_len > match_len || excess_len > match_len {
+                return Some(util::min(cos_dist * (1.0 + keyword_dist), 1.0));
+            }
+
+            return Some(word_vec::cosine_distance(&excess_vec, &missing_vec));
+        }
+
+        // there are at least some match words at this point
+
+        // if both, missing AND excess words are not found, we can't calculate cosine
+        if nf_miss == missing_len && nf_excs == excess_len {
+            return None;
+        }
+
+        // if no missing words, cosine dist
+        if nf_miss == missing_len {
+            if let Some(cos_dist) = self.cosine_distance(words, &cand_words) {
+                let nf = (nf_excs + nf_match + nf_miss) as f32;
+                let nr_miss = (missing_len + excess_len) as f32;
+
+                if match_len >= 2 && missing_len == 0 && excess_len < 2 && keyword_dist < 0.3 {
+                    return Some(cos_dist * keyword_dist);
+                }
+
+                if match_len >= 2
+                    && match_len > missing_len
+                    && match_len > excess_len
+                    && keyword_dist < 0.45
+                    && nf <= 1.0
+                {
+                    return Some(cos_dist * (keyword_dist / (keyword_dist + cos_dist)));
+                }
+
+                return Some(util::min(cos_dist + nf * keyword_dist / nr_miss, 1.0));
+            }
+
+            return None;
+        }
+
+        if nf_excs == excess_len {
+            if let Some(cos_dist) = self.cosine_distance(words, &cand_words) {
+                let nf = (nf_excs + nf_match + nf_miss) as f32;
+                let nr_miss = (missing_len + excess_len) as f32;
+
+                if match_len >= 2 && missing_len < 2 && excess_len == 0 && keyword_dist < 0.3 {
+                    return Some(cos_dist * keyword_dist);
+                }
+
+                if match_len >= 2
+                    && match_len > excess_len
+                    && match_len > missing_len
+                    && keyword_dist < 0.45
+                    && nf <= 1.0
+                {
+                    return Some(cos_dist * (keyword_dist / (keyword_dist + cos_dist)));
+                }
+
+                return Some(util::min(cos_dist + nf * keyword_dist / nr_miss, 1.0));
+            }
+
+            return None;
+        }
+
+        let mut lhs_match_vec = rhs_match_vec.clone();
+
+        if missing_len > 0 {
+            word_vec::subtract(&mut lhs_match_vec, &missing_vec);
+        }
+
+        if excess_len > 0 {
+            word_vec::subtract(&mut rhs_match_vec, &excess_vec);
+        }
+
+        word_vec::normalize(&mut missing_vec[..]);
+        word_vec::normalize(&mut excess_vec[..]);
+        let me_cos_dist = word_vec::cosine_distance(&missing_vec, &excess_vec);
+
+        word_vec::normalize(&mut lhs_match_vec[..]);
+        word_vec::normalize(&mut rhs_match_vec[..]);
+
+        let cos_dist = word_vec::cosine_distance(&lhs_match_vec, &rhs_match_vec);
+
+        let thresh: f32;
+        if missing_len > 1 {
+            if excess_len < 2 {
+                thresh = 0.5;
+            } else {
+                thresh = 0.45;
+            };
+        } else {
+            if excess_len < 2 {
+                thresh = 0.55;
+            } else {
+                thresh = 0.65;
+            };
+        };
+
+        // missing and excess words and keyword distance is too large
+        if excess_len >= 1 && missing_len >= 1 && match_len <= 2 && keyword_dist > 0.45 {
+            return Some(1.3 * cos_dist + util::max(0.0, me_cos_dist - thresh));
+        }
+
+        // more than one excess, at most one missing, keyword distance is not so big
+        if excess_len <= 2 && missing_len <= 2 && match_len > excess_len && keyword_dist <= 0.45 {
+            return Some(0.75 * cos_dist + util::max(0.0, me_cos_dist - thresh));
+        }
+
+        Some(cos_dist + util::max(0.0, me_cos_dist - thresh))
+    }
+
+    #[inline]
+    fn cosine_distance(&self, query_words: &Vec<String>, cand_words: &Vec<String>) -> Option<f32> {
+        let (mut query_vec, nf, _nf_query_words) = self
+            .word_vecs
+            .as_ref()
+            .unwrap()
+            .get_combined_vec(&query_words, &self.terms_relevance, &self.stopwords);
+
+        if nf == query_words.len() {
+            return None;
+        }
+
+        let (mut cand_vec, nf, _nf_cand_words) = self.word_vecs.as_ref().unwrap().get_combined_vec(
+            &cand_words,
+            &self.terms_relevance,
+            &self.stopwords,
+        );
+
+        if nf == cand_words.len() {
+            return None;
+        }
+
+        word_vec::normalize(&mut query_vec[..]);
+        word_vec::normalize(&mut cand_vec[..]);
+
+        Some(word_vec::cosine_distance(&query_vec, &cand_vec))
     }
 
     pub fn get_distances(&self, query: &str, candidates: &Vec<String>) -> Vec<DistanceResult> {
@@ -562,7 +831,7 @@ impl Qpick {
         }
 
         let mut dist_results: Vec<DistanceResult> = vec![];
-        let (ngrams, trs, ngrams_ids, words, wrs, _) = ngrams::parse(
+        let (_, _, _, words, wrs, _, word_syns) = ngrams::parse(
             &query,
             &self.synonyms,
             &self.stopwords,
@@ -570,14 +839,15 @@ impl Qpick {
             ngrams::ParseMode::Search,
         );
 
-        let ngrams_trs: FnvHashMap<String, f32> = ngrams
+        let (words_index, words_set) = index_words(&words, &word_syns);
+
+        let cand_synonyms: FnvHashMap<String, String> = word_syns
             .iter()
-            .zip(trs.iter())
-            .map(|(n, r)| (n.to_string(), *r))
-            .collect::<FnvHashMap<String, f32>>();
+            .map(|(wid, syn)| (syn.to_string(), words[*wid].to_string()))
+            .collect();
 
         for (cid, cand_query) in candidates.into_iter().enumerate() {
-            let (cand_ngrams, ctrs, _, _, _, _) = ngrams::parse(
+            let (_, _, _, cand_words, cand_wrs, _, _) = ngrams::parse(
                 &cand_query,
                 &self.synonyms,
                 &self.stopwords,
@@ -585,35 +855,37 @@ impl Qpick {
                 ngrams::ParseMode::Search,
             );
 
-            // round to 2 decimals, so we get same distances here and in search results
-            let ctrs = ctrs
-                .iter()
-                .map(|ctr| (*ctr * 100.0).round() / 100.0)
-                .collect::<Vec<f32>>();
-
             let mut words_rel_vec = vec![0.0; words.len()];
-            for (i, cngram) in cand_ngrams.iter().enumerate() {
-                for word_idx in ngrams_ids.get(cngram).unwrap_or(&vec![]) {
-                    let ngram_tr = ngrams_trs.get(cngram).unwrap();
-                    if words_rel_vec[*word_idx] == 0.0 {
-                        words_rel_vec[*word_idx] =
-                            wrs[*word_idx] * util::min(ctrs[i], *ngram_tr) / *ngram_tr;
-                    }
+            for (cword_idx, cword) in cand_words.iter().enumerate() {
+                if let Some(word_idx) = words_index.get(cword) {
+                    words_rel_vec[*word_idx] += util::min(wrs[*word_idx], cand_wrs[cword_idx]);
                 }
             }
 
-            let similarity = words_rel_vec.iter().fold(0.0, |mut sum, &x| {
+            let sim = words_rel_vec.iter().fold(0.0, |mut sum, &x| {
                 sum += x;
                 sum
             });
-            let dist = util::max(1.0 - similarity, 0.0);
+            let keyword_dist = util::max(1.0 - sim, 0.0);
+
+            let (cand_words, match_words, miss_words, excess_words) =
+                ngrams::match_queries(cand_query, &words_set, &cand_synonyms);
+
+            let cosine_dist = self.cosine_diff_distance(
+                &words,
+                &cand_words,
+                &match_words,
+                &miss_words,
+                &excess_words,
+                keyword_dist,
+            );
 
             dist_results.push(DistanceResult {
                 query: cand_query.to_string(),
                 dist: Distance {
                     query_id: cid as u64,
-                    keyword: dist,
-                    cosine: None,
+                    keyword: keyword_dist,
+                    cosine: cosine_dist,
                 },
             });
         }
@@ -626,7 +898,7 @@ impl Qpick {
             return vec![];
         }
 
-        let (ngrams, trs, ngrams_ids, words, wrs, must_have) = ngrams::parse(
+        let (ngrams, trs, ngrams_ids, words, wrs, must_have, synonyms) = ngrams::parse(
             &query,
             &self.synonyms,
             &self.stopwords,
@@ -641,11 +913,16 @@ impl Qpick {
             words,
             wrs,
             must_have,
+            synonyms,
             Some(count as usize),
             with_tfidf,
         ) {
             Ok(ids) => ids,
-            Err(err) => panic!("Failed to get ids with: {message}", message = err),
+            Err(err) => {
+                println!("Search error {:?}", err);
+
+                vec![]
+            }
         }
     }
 
@@ -655,16 +932,10 @@ impl Qpick {
         count: u32,
         with_tfidf: bool,
     ) -> String {
-        let mut res: Vec<(u64, f32, String)> = self
+        let mut res: Vec<(u64, Distance, String)> = self
             .get(query, 30 * count, with_tfidf)
             .into_iter()
-            .map(|r| {
-                (
-                    r.query_id,
-                    r.dist.keyword,
-                    r.query.unwrap_or("".to_string()),
-                )
-            })
+            .map(|r| (r.query_id, r.dist, r.query.unwrap_or("".to_string())))
             .collect();
         res.truncate(count as usize);
 
