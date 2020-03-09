@@ -4,12 +4,14 @@ use std::io::prelude::*;
 use std::io::Error;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use config;
 use ngrams;
 use stopwords;
 use stringvec;
 use synonyms;
+use toponyms;
 use util;
 use util::{BRED, BYELL, ECOL};
 
@@ -102,11 +104,10 @@ pub fn shard(
     };
 
     let synonyms_path = PathBuf::from(&output_dir).join(&c.synonyms_file);
-    let synonyms_dict = if synonyms_path.is_file() {
-        Some(synonyms::load(&synonyms_path).unwrap())
-    } else {
-        None
-    };
+    let synonyms_dict = synonyms::load(&synonyms_path);
+
+    let toponyms_path = PathBuf::from(&output_dir).join(&c.toponyms_file);
+    let toponyms = Arc::new(toponyms::load(&toponyms_path));
 
     let (sender, receiver): (Sender<u64>, Receiver<u64>) = mpsc::channel();
 
@@ -129,6 +130,7 @@ pub fn shard(
         let sender = sender.clone();
         let stopwords = stopwords.clone();
         let synonyms_dict = synonyms_dict.clone();
+        let toponyms = toponyms.clone();
         let queries_parts = queries_parts.clone();
         let valid_prefixes = valid_prefixes.clone();
         let output_dir = output_dir.to_string().clone();
@@ -218,6 +220,7 @@ pub fn shard(
                     let (ngrams, trs, _, _, _, _, _) = &ngrams::parse(
                         &query,
                         &synonyms_dict,
+                        &toponyms,
                         &stopwords,
                         &tr_map,
                         ngrams::ParseMode::Index,

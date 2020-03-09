@@ -161,8 +161,7 @@ pub fn separate_digits<'a, S: Into<Cow<'a, str>>>(input: S) -> Cow<'a, str> {
         // splits numbers from the rest of the string
         static ref RE_DIG: regex::Regex = regex::Regex::new(r"(?x)
             (?P<b>[[:alpha:]]{2,}|\s|^) # (at least 2 letters in front OR a space OR it's the beginning) AND
-            (?P<d>\d{2,})               # at least 2 digits AND
-            (?P<e>[^\d]|$)              # followed by non digits or the end of the string.
+            (?P<d>\d{2,})               # at least 2 digits
         ").unwrap();
     }
 
@@ -320,11 +319,13 @@ pub fn get_words_relevances(
     tr_map: &fst::Map,
     stopwords: &FnvHashSet<String>,
     synonyms: &FnvHashMap<usize, String>,
+    toponyms: &Option<fst::Set>,
     synonyms_dict: &Option<FnvHashMap<String, String>>,
     mode: ParseMode,
 ) -> FnvHashMap<String, f32> {
     let (words, _) = get_norm_query_vec(query, &None, mode);
-    let (_, _, relevs) = index_words(&words, tr_map, stopwords, synonyms, synonyms_dict);
+    let (_, _, relevs, _, _) =
+        index_words(&words, tr_map, stopwords, synonyms, toponyms, synonyms_dict);
 
     words
         .iter()
@@ -339,11 +340,21 @@ fn index_words(
     tr_map: &fst::Map,
     stopwords: &FnvHashSet<String>,
     synonyms: &FnvHashMap<usize, String>,
+    toponyms: &Option<fst::Set>,
     synonyms_dict: &Option<FnvHashMap<String, String>>,
-) -> (Vec<usize>, Vec<usize>, Vec<f32>) {
+) -> (
+    Vec<usize>,
+    Vec<usize>,
+    Vec<f32>,
+    Vec<usize>,
+    FnvHashSet<usize>,
+) {
     let words_len = words.len();
     let mut rels: Vec<f32> = Vec::with_capacity(words_len);
     let mut stop_vec: Vec<usize> = Vec::with_capacity(words_len);
+    let mut numerics: FnvHashSet<usize> = FnvHashSet::default();
+    let (mut numeric_rel, mut numeric) = (0.0, words_len);
+    let (mut toponym_rel, mut toponym) = (0.0, words_len);
     let mut word_vec: Vec<usize> = Vec::with_capacity(words_len);
     let mut seen_words: FnvHashSet<String> = FnvHashSet::default();
 
@@ -370,6 +381,21 @@ fn index_words(
                 norm += rel;
             }
 
+            if word.chars().any(char::is_numeric) {
+                numerics.insert(i);
+                if rel > numeric_rel {
+                    numeric_rel = rel;
+                    numeric = i;
+                }
+            }
+
+            if let Some(toponyms) = toponyms {
+                if toponyms.contains(word) && rel > toponym_rel {
+                    toponym_rel = rel;
+                    toponym = i;
+                }
+            }
+
             rels.push(rel);
             word_vec.push(i);
         }
@@ -379,11 +405,22 @@ fn index_words(
             min_word_idx = i;
         }
 
+        if seen_words.contains(word) {
+            continue;
+        }
+
         // record seen words
         seen_words.insert(word.to_string());
         if let Some(syn_dict) = synonyms_dict {
             if let Some(syn) = syn_dict.get(word) {
                 seen_words.insert(syn.to_string());
+
+                if let Some(toponyms) = toponyms {
+                    if toponyms.contains(syn) && rel > toponym_rel {
+                        toponym_rel = rel;
+                        toponym = i;
+                    }
+                }
             }
         }
     }
@@ -395,7 +432,17 @@ fn index_words(
         word_vec.remove(min_word_idx);
     }
 
-    (word_vec, stop_vec, rels)
+    let mut must_have: Vec<usize> = Vec::with_capacity(2);
+
+    if numeric < words_len {
+        must_have.push(numeric)
+    }
+
+    if toponym < words_len && toponym != numeric {
+        must_have.push(toponym)
+    }
+
+    (word_vec, stop_vec, rels, must_have, numerics)
 }
 
 #[derive(Debug)]
@@ -710,9 +757,66 @@ pub fn get_stop_ngrams(
 use std::cmp::{Ordering, PartialOrd};
 
 #[inline]
+fn must_have_top_word(
+    must_have: &FnvHashSet<usize>,
+    ids_words_rels: &Vec<(usize, String, f32)>,
+    relevance_threshold: f32,
+) -> bool {
+    must_have.contains(&ids_words_rels[1].0)
+        || ids_words_rels[1].2 < relevance_threshold * ids_words_rels[0].2
+}
+
+#[inline]
+fn find_must_have_words(
+    ids_words_rels: &Vec<(usize, String, f32)>,
+    must_have: &Vec<usize>,
+    numerics: &FnvHashSet<usize>,
+    words_len: usize,
+    word_rel_thresh: f32,
+) -> (usize, Vec<usize>) {
+    let mut must_word_idx: usize = words_len;
+    if must_have.len() > 0 {
+        must_word_idx = must_have[0];
+    }
+    let mut must_have: FnvHashSet<usize> = must_have.iter().cloned().collect();
+
+    if ids_words_rels[0].2 > 1.85 * word_rel_thresh || (words_len > 1 && ids_words_rels[0].2 > 0.6)
+    {
+        must_word_idx = ids_words_rels[0].0;
+        must_have.insert(ids_words_rels[0].0);
+    } else if words_len > 2
+        && ids_words_rels[0].2 > word_rel_thresh
+        && ids_words_rels[2].2 < word_rel_thresh
+    {
+        must_word_idx = ids_words_rels[0].0;
+        must_have.insert(ids_words_rels[0].0);
+    } else if words_len <= 3 && must_have.len() > 0 {
+        must_have.insert(ids_words_rels[0].0);
+    } else if words_len <= 6 {
+        let top_rel_thresh = if words_len > 4 { 0.78 } else { 0.85 };
+        if must_have_top_word(&must_have, &ids_words_rels, top_rel_thresh) {
+            for (_i, (word_idx, _word, _word_rel)) in ids_words_rels.iter().enumerate() {
+                // skip serial numbers, dates
+                if numerics.contains(word_idx) || must_have.contains(word_idx) {
+                    continue;
+                }
+
+                must_word_idx = *word_idx;
+                must_have.insert(*word_idx);
+
+                break;
+            }
+        }
+    }
+
+    (must_word_idx, must_have.into_iter().collect())
+}
+
+#[inline]
 pub fn parse(
     query: &str,
     synonyms_dict: &Option<FnvHashMap<String, String>>,
+    toponyms: &Option<fst::Set>,
     stopwords: &FnvHashSet<String>,
     tr_map: &fst::Map,
     mode: ParseMode,
@@ -728,7 +832,6 @@ pub fn parse(
     let mut ngrams_relevs: Vec<f32> = Vec::with_capacity(WORDS_PER_QUERY * 3);
     let mut ngrams: Vec<String> = Vec::with_capacity(WORDS_PER_QUERY * 3);
     let mut ngrams_ids: FnvHashMap<String, Vec<usize>> = FnvHashMap::default();
-    let mut must_have: Vec<usize> = Vec::with_capacity(2);
 
     let (words, synonyms) = get_norm_query_vec(query, synonyms_dict, mode);
     if words.is_empty() {
@@ -764,8 +867,15 @@ pub fn parse(
         );
     }
 
-    let (mut word_idx, stop_idx, words_relevs) =
-        index_words(&words, tr_map, stopwords, &synonyms, &synonyms_dict);
+    let (mut word_idx, stop_idx, words_relevs, must_have, numerics) = index_words(
+        &words,
+        tr_map,
+        stopwords,
+        &synonyms,
+        &toponyms,
+        &synonyms_dict,
+    );
+
     let stop_ngrams = get_stop_ngrams(
         &words,
         &words_relevs,
@@ -934,30 +1044,8 @@ pub fn parse(
         };
     }
 
-    // identify must have word
-    let mut must_word_idx: usize = words_len;
-    if words_vec[0].2 > 1.85 * word_thresh
-        || (words_len > 1 && words_vec[0].2 > 0.6)
-        || (words_len > 2 && words_vec[0].2 > word_thresh && words_vec[2].2 < word_thresh)
-    {
-        must_word_idx = words_vec[0].0;
-        must_have.push(words_vec[0].0);
-    } else if words_len <= 5 {
-        if (words_len > 4 && words_vec[1].2 < 0.78 * words_vec[0].2)
-            || (words_len <= 4 && words_vec[1].2 < 0.85 * words_vec[0].2)
-        {
-            for (word_idx, word, _word_rel) in words_vec.iter() {
-                // skip serial numbers, dates, 's01' 's02' type of words,
-                if word.chars().any(char::is_numeric) {
-                    continue;
-                }
-
-                must_word_idx = *word_idx;
-                must_have.push(*word_idx);
-                break;
-            }
-        }
-    }
+    let (must_word_idx, must_have) =
+        find_must_have_words(&words_vec, &must_have, &numerics, words_len, word_thresh);
 
     if must_word_idx < words_len && words_len < 5 && mode == ParseMode::Search {
         update(
@@ -1193,6 +1281,7 @@ mod tests {
     use std::path::PathBuf;
     use stopwords;
     use synonyms;
+    use toponyms;
     use util::*;
 
     #[test]
@@ -1250,6 +1339,14 @@ mod tests {
 
         let q = "ersatzteile24 laptop";
         let e = "ersatzteile 24  laptop";
+        assert_eq!(normalize(q), e);
+
+        let q = "neumeyer str. 22 24nürnberg";
+        let e = "neumeyer str   22   24 nuernberg";
+        assert_eq!(normalize(q), e);
+
+        let q = "neumeyer str. 22-24nürnberg";
+        let e = "neumeyer str   22   24 nuernberg";
         assert_eq!(normalize(q), e);
     }
 
@@ -1318,8 +1415,8 @@ mod tests {
         }
 
         let synonyms: FnvHashMap<usize, String> = FnvHashMap::default();
-        let (mut word_idx, stop_idx, rels) =
-            index_words(&words, tr_map, stopwords, &synonyms, &None);
+        let (mut word_idx, stop_idx, rels, _, _) =
+            index_words(&words, tr_map, stopwords, &synonyms, &None, &None);
 
         let stop_ngrams = get_stop_ngrams(&words, &rels, &mut word_idx, &stop_idx, &synonyms, mode);
 
@@ -1527,6 +1624,7 @@ mod tests {
     fn assert_must_have_words_ngrams_ids(
         query: &str,
         synonyms: &Option<FnvHashMap<String, String>>,
+        toponyms: &Option<fst::Set>,
         stopwords: &FnvHashSet<String>,
         tr_map: &fst::Map,
         mode: ParseMode,
@@ -1535,7 +1633,7 @@ mod tests {
         e_ngrams_ids: Vec<(&str, Vec<usize>)>,
     ) {
         let (_, _, ngrams_ids, words, _, must_have, _) =
-            parse(query, synonyms, &stopwords, &tr_map, mode);
+            parse(query, synonyms, &toponyms, &stopwords, &tr_map, mode);
         let e_ngrams_ids = e_ngrams_ids
             .into_iter()
             .map(|(s, v)| (s.to_string(), v))
@@ -1548,7 +1646,9 @@ mod tests {
 
     #[test]
     fn test_parse() {
-        let synonyms = Some(synonyms::load(&PathBuf::from("./index/synonyms.txt")).unwrap());
+        let synonyms = synonyms::load(&PathBuf::from("./index/synonyms.txt"));
+        let toponyms = toponyms::load(&PathBuf::from("./index/toponyms.fst"));
+
         let stopwords = match stopwords::load("./index/stopwords.txt") {
             Ok(stopwords) => stopwords,
             Err(_) => panic!([
@@ -1571,10 +1671,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![2],
+            vec![0, 2],
             vec!["list", "of", "literature", "genres", "txt"],
             vec![
                 ("list literature of", vec![0, 1, 2]),
@@ -1595,10 +1696,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![0],
+            vec![0, 3, 2],
             vec!["friends", "s01", "e01", "stream"],
             vec![
                 ("s01 stream", vec![1, 3]),
@@ -1616,10 +1718,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![0],
+            vec![1, 0],
             vec!["emacs", "bind", "buffer", "mode", "key"],
             vec![
                 ("emacs key", vec![0, 4]),
@@ -1641,10 +1744,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![0],
+            vec![1, 0],
             vec!["disneyland", "paris", "ticket", "download"],
             vec![
                 ("disneyland paris", vec![0, 1]),
@@ -1662,10 +1766,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![0],
+            vec![1, 0],
             vec![
                 "cisco",
                 "4500",
@@ -1699,6 +1804,7 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1716,10 +1822,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![5],
+            vec![1, 5],
             vec!["welche", "30", "unternehmen", "sind", "im", "dax"],
             vec![
                 ("unternehmen welche", vec![2, 0]),
@@ -1739,6 +1846,7 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1760,10 +1868,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![],
+            vec![4],
             vec!["fsck", "inode", "has", "imagic", "flag", "set"],
             vec![
                 ("fsck inode", vec![0, 1]),
@@ -1788,6 +1897,7 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1810,10 +1920,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![2],
+            vec![0, 2],
             vec!["dinkel", "vollkorn", "toasties", "rezept"],
             vec![
                 ("toasties vollkorn", vec![1, 2]),
@@ -1830,10 +1941,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![0],
+            vec![0, 2],
             vec!["laravel", "has", "many", "order", "by"],
             // fix form 'has many' instead of 'has laravel'
             vec![
@@ -1853,10 +1965,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![2],
+            vec![0, 3, 2],
             vec!["samsung", "tv", "skype", "2017"],
             vec![
                 ("samsung tv", vec![0, 1]),
@@ -1873,6 +1986,7 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -1897,10 +2011,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
-            vec![0],
+            vec![1, 0],
             vec!["caddy", "14", "ersatzteile"],
             vec![
                 ("caddy ersatzteile", vec![0, 2]),
@@ -1915,10 +2030,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![],
+            vec![1],
             vec!["caddy", "14", "ersatzteile"],
             vec![
                 ("caddy", vec![0]),
@@ -1937,10 +2053,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![0],
+            vec![0, 3],
             vec!["pokemon", "best", "vs", "rock"],
             vec![
                 ("best rock", vec![1, 3]),
@@ -1961,13 +2078,17 @@ mod tests {
         let q = "friends s01 e01 stream";
         assert_must_have_words_ngrams_ids(
             q,
-            &None, // TODO add test for synonyms
+            &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![0],
+            vec![0, 3, 2],
             vec!["friends", "s01", "e01", "stream"],
             vec![
+                ("friends streaming", vec![3, 0]),
+                ("s01 streaming", vec![3, 1]),
+                ("e01 streaming", vec![3, 2]),
                 ("s01 stream", vec![1, 3]),
                 ("friends", vec![0]),
                 ("friends s01", vec![0, 1]),
@@ -1984,26 +2105,24 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![0],
+            vec![1, 0],
             vec!["calypso", "k5177"],
-            vec![
-                ("calypso", vec![0]),
-                ("calypso k5177", vec![0, 1]),
-                ("k5177", vec![1]),
-            ],
+            vec![("calypso k5177", vec![0, 1]), ("k5177", vec![1])],
         );
 
         let q = "kenzan flowers size";
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![0],
+            vec![1, 0],
             vec!["kenzan", "flowers", "size"],
             vec![
                 ("kenzan size", vec![0, 2]),
@@ -2013,10 +2132,22 @@ mod tests {
             ],
         );
         // assert equal outcomes for different parsing modes
-        let (_, _, s_ngrams_ids, s_words, _, s_must_have, _) =
-            parse(q, &synonyms, &stopwords, &tr_map, ParseMode::Index);
-        let (_, _, i_ngrams_ids, i_words, _, i_must_have, _) =
-            parse(q, &synonyms, &stopwords, &tr_map, ParseMode::Search);
+        let (_, _, s_ngrams_ids, s_words, _, s_must_have, _) = parse(
+            q,
+            &synonyms,
+            &toponyms,
+            &stopwords,
+            &tr_map,
+            ParseMode::Index,
+        );
+        let (_, _, i_ngrams_ids, i_words, _, i_must_have, _) = parse(
+            q,
+            &synonyms,
+            &toponyms,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+        );
         assert_eq!(s_ngrams_ids, i_ngrams_ids);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
@@ -2025,6 +2156,7 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -2038,9 +2170,9 @@ mod tests {
         );
         // assert equal outcomes for different parsing modes
         let (_, _, s_ngrams_ids, s_words, _, s_must_have, _) =
-            parse(q, &None, &stopwords, &tr_map, ParseMode::Index);
+            parse(q, &None, &None, &stopwords, &tr_map, ParseMode::Index);
         let (_, _, i_ngrams_ids, i_words, _, i_must_have, _) =
-            parse(q, &None, &stopwords, &tr_map, ParseMode::Search);
+            parse(q, &None, &None, &stopwords, &tr_map, ParseMode::Search);
         assert_eq!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
@@ -2049,10 +2181,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![0],
+            vec![0, 3],
             vec!["ormlite", "callintransaction", "and", "h2"],
             vec![
                 ("and callintransaction h2", vec![1, 2, 3]),
@@ -2067,9 +2200,9 @@ mod tests {
         );
         // assert (not) equal outcomes for different parsing modes [ormlite missing on indexing part]
         let (_, _, s_ngrams_ids, s_words, _, s_must_have, _) =
-            parse(q, &None, &stopwords, &tr_map, ParseMode::Search);
+            parse(q, &None, &None, &stopwords, &tr_map, ParseMode::Search);
         let (_, _, i_ngrams_ids, i_words, _, i_must_have, _) =
-            parse(q, &None, &stopwords, &tr_map, ParseMode::Index);
+            parse(q, &None, &None, &stopwords, &tr_map, ParseMode::Index);
         assert_ne!(s_ngrams_ids, i_ngrams_ids, "query: {}", q);
         assert_eq!(s_words, i_words);
         assert_eq!(s_must_have, i_must_have, "query: {}", q);
@@ -2078,6 +2211,7 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Index,
@@ -2102,6 +2236,7 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search, // include synonyms bicycle -> bike
@@ -2131,10 +2266,11 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
-            vec![],
+            vec![6],
             vec!["youngest", "person", "to", "walk", "on", "the", "moon"],
             vec![
                 ("moon on the", vec![4, 5, 6]),
@@ -2157,6 +2293,7 @@ mod tests {
         assert_must_have_words_ngrams_ids(
             q,
             &synonyms,
+            &toponyms,
             &stopwords,
             &tr_map,
             ParseMode::Search,
@@ -2171,6 +2308,33 @@ mod tests {
                 ("moon on the person", vec![1, 2, 3, 4]),
                 ("moon on the youngest", vec![0, 2, 3, 4]),
                 ("moon person", vec![4, 1]),
+            ],
+        );
+
+        let q = "blutdruck 95 zu 56 puls 113";
+        assert_must_have_words_ngrams_ids(
+            q,
+            &synonyms,
+            &toponyms,
+            &stopwords,
+            &tr_map,
+            ParseMode::Search,
+            vec![5, 4, 0],
+            vec!["blutdruck", "95", "zu", "56", "puls", "113"],
+            vec![
+                ("56 zu 95", vec![1, 2, 3]),
+                ("95 blutdruck", vec![0, 1]),
+                ("56 zu blutdruck", vec![0, 2, 3]),
+                ("113 blutdruck", vec![0, 5]),
+                ("95 puls", vec![1, 4]),
+                ("blutdruck puls", vec![0, 4]),
+                ("56 zu puls", vec![2, 3, 4]),
+                ("113 puls", vec![4, 5]),
+                ("113", vec![5]),
+                ("113 blutdruck puls", vec![0, 5, 4]),
+                ("113 95", vec![1, 5]),
+                ("113 zu", vec![5, 2]),
+                ("113 56 zu", vec![2, 3, 5]),
             ],
         );
     }

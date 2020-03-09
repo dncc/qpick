@@ -16,7 +16,15 @@ pub fn parse_line(line: &str) -> Result<(String, String), Error> {
     Ok((word, synonym))
 }
 
-pub fn load(path: &Path) -> Result<FnvHashMap<String, String>, Error> {
+pub fn load(path: &Path) -> Option<FnvHashMap<String, String>> {
+    if path.is_file() {
+        Some(parse_file(&path).unwrap())
+    } else {
+        None
+    }
+}
+
+fn parse_file(path: &Path) -> Result<FnvHashMap<String, String>, Error> {
     let mut synonyms = FnvHashMap::default();
 
     let f = File::open(path)?;

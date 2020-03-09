@@ -12,6 +12,7 @@ pub struct Config {
     pub shard_size: usize, // number of ids in the shard
     pub terms_relevance_file: String,
     pub stopwords_file: String,
+    pub toponyms_file: String,
     pub synonyms_file: String,
     pub i2q_file: String,
     pub words_file: String,
@@ -39,7 +40,7 @@ impl Config {
 
         let nr_shards = match config["nr_shards"] {
             Value::Number(ref nr_shards) => nr_shards.as_u64().unwrap(),
-            _ => 32,
+            _ => 64,
         };
 
         let shard_size = match config["shard_size"] {
@@ -49,17 +50,25 @@ impl Config {
 
         let bucket_size = match config["bucket_size"] {
             Value::Number(ref bucket_size) => bucket_size.as_u64().unwrap(),
-            _ => 10_000,
+            _ => 2_500,
         };
 
         let id_size = match config["id_size"] {
             Value::Number(ref id_size) => id_size.as_u64().unwrap(),
-            _ => 7,
+            _ => 6,
         };
 
         let terms_relevance_file = match config["terms_relevance_file"] {
             Value::String(ref terms_relevance_file) => terms_relevance_file.as_str(),
-            _ => panic!("Failed to parse terms relevance file name from the config!"),
+            _ => panic!("Failed to parse file name for word relevances from the config!"),
+        };
+
+        let toponyms_file = match config["toponyms_file"] {
+            Value::String(ref toponyms_file) => toponyms_file.as_str(),
+            _ => {
+                println!("File name for toponyms is not provided in the config!");
+                ""
+            }
         };
 
         let stopwords_file = match config["stopwords_file"] {
@@ -69,12 +78,18 @@ impl Config {
 
         let synonyms_file = match config["synonyms_file"] {
             Value::String(ref synonyms_file) => synonyms_file.as_str(),
-            _ => "",
+            _ => {
+                println!("File name for synonyms is not provided in the config!");
+                ""
+            }
         };
 
         let i2q_file = match config["i2q_file"] {
             Value::String(ref i2q_file) => i2q_file.as_str(),
-            _ => "",
+            _ => {
+                println!("File name for i2q mapping is not provided in the config!");
+                ""
+            }
         };
 
         let words_file = match config["words_file"] {
@@ -99,6 +114,7 @@ impl Config {
             shard_size: shard_size as usize,
             terms_relevance_file: terms_relevance_file.to_string(),
             synonyms_file: synonyms_file.to_string(),
+            toponyms_file: toponyms_file.to_string(),
             stopwords_file: stopwords_file.to_string(),
             i2q_file: i2q_file.to_string(),
             words_file: words_file.to_string(),

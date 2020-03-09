@@ -43,6 +43,7 @@ pub mod shard;
 pub mod stopwords;
 pub mod stringvec;
 pub mod synonyms;
+pub mod toponyms;
 pub mod word_vec;
 
 use rayon::iter::IntoParallelRefIterator;
@@ -313,6 +314,7 @@ pub struct Qpick<'a> {
     path: String,
     config: config::Config,
     synonyms: Option<FnvHashMap<String, String>>,
+    toponyms: Option<fst::Set>,
     stopwords: FnvHashSet<String>,
     terms_relevance: fst::Map,
     shards: Arc<Vec<Shard>>,
@@ -389,11 +391,10 @@ impl<'a> Qpick<'a> {
         };
 
         let synonyms_path = PathBuf::from(&path).join(&c.synonyms_file);
-        let synonyms = if synonyms_path.is_file() {
-            Some(synonyms::load(&synonyms_path).unwrap())
-        } else {
-            None
-        };
+        let synonyms = synonyms::load(&synonyms_path);
+
+        let toponyms_path = PathBuf::from(&path).join(&c.toponyms_file);
+        let toponyms = toponyms::load(&toponyms_path);
 
         let terms_relevance_path = &format!("{}/{}", path, c.terms_relevance_file);
         let terms_relevance = match Map::from_path(terms_relevance_path) {
@@ -468,6 +469,7 @@ impl<'a> Qpick<'a> {
             config: c,
             path: path,
             synonyms: synonyms,
+            toponyms: toponyms,
             stopwords: stopwords,
             terms_relevance: terms_relevance,
             shards: Arc::new(shards),
@@ -562,7 +564,9 @@ impl<'a> Qpick<'a> {
 
         let mut keyword_matches: Vec<KeywordMatchResult> = res_data
             .into_iter()
-            .filter(|(_, words_rel_vec)| must_have.is_empty() || words_rel_vec[must_have[0]] > 0.0)
+            .filter(|(_, words_rel_vec)| {
+                must_have.is_empty() || must_have.iter().all(|i| words_rel_vec[*i] > 0.0)
+            })
             .map(|(query_id, words_rel_vec)| {
                 let similarity = words_rel_vec.iter().fold(0.0, |mut sum, &x| {
                     sum += x;
@@ -834,6 +838,7 @@ impl<'a> Qpick<'a> {
         let (_, _, _, words, wrs, _, word_syns) = ngrams::parse(
             &query,
             &self.synonyms,
+            &self.toponyms,
             &self.stopwords,
             &self.terms_relevance,
             ngrams::ParseMode::Search,
@@ -850,6 +855,7 @@ impl<'a> Qpick<'a> {
             let (_, _, _, cand_words, cand_wrs, _, _) = ngrams::parse(
                 &cand_query,
                 &self.synonyms,
+                &self.toponyms,
                 &self.stopwords,
                 &self.terms_relevance,
                 ngrams::ParseMode::Search,
@@ -901,6 +907,7 @@ impl<'a> Qpick<'a> {
         let (ngrams, trs, ngrams_ids, words, wrs, must_have, synonyms) = ngrams::parse(
             &query,
             &self.synonyms,
+            &self.toponyms,
             &self.stopwords,
             &self.terms_relevance,
             ngrams::ParseMode::Search,

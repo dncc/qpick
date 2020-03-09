@@ -5,6 +5,7 @@
     "shard_size": 250000000,
     "terms_relevance_file": "terms_relevance.fst",
     "stopwords_file": "stopwords.txt",
+    "toponyms_file": "toponyms.fst",
     "synonyms_file": "synonyms.txt",
     "words_file": "/run/shm/qpick/vocab.txt",
     "word_vecs_file": "/run/shm/qpick/vectors.bin",
