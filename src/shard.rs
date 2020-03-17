@@ -50,19 +50,19 @@ impl From<String> for QueryType {
 
 #[inline]
 pub fn parse_query_line(line: &str) -> Result<(String, String), Error> {
-    let v: Vec<&str> = line.split("\t").map(|t| t.trim()).collect();
-    let v: Vec<&str> = v[0]
-        .trim_matches(|s| s == '"')
-        .split(":")
-        .map(|t| t.trim())
-        .collect();
-    let (query_type, query) = match v.len() {
+    let split: Vec<&str> = line.split("\t").map(|t| t.trim()).collect();
+    let qs = serde_json::from_str::<String>(split[0])
+        .unwrap_or(split[0].trim_matches(|s| s == '"').to_string());
+
+    let qv: Vec<&str> = qs.split(":").map(|t| t.trim()).collect();
+
+    let (query_type, query) = match qv.len() {
         // prefix/type is missing, assume it's query
-        1 => ("qe".to_string(), v[0].to_string()),
+        1 => ("qe".to_string(), qv[0].to_string()),
         // q:<query>
-        2 => (v[0].to_string(), v[1].to_string()),
+        2 => (qv[0].to_string(), qv[1].to_string()),
         // pre-appended id 0:q:<query>, ignore it
-        3 => (v[1].to_string(), v[2].to_string()),
+        3 => (qv[1].to_string(), qv[2].to_string()),
         // something else
         _ => panic!("Unknown format: {:?}!", &line),
     };
