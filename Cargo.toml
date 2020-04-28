@@ -30,4 +30,5 @@ pbr = "*"
 fnv = "1.0.3"
 num = "*"
 blas = "0.19"
-openblas-src = "0.5"
+openblas-src = { version = "0.5", features = ["system"] }
+
