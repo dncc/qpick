@@ -1,11 +1,11 @@
 qpick
 ===
 
-Search for similar short strings (queries in particular) based on keyword matches and TF-IDF-like scoring function.
+Search for similar short strings (queries in particular) based on word-vector similarity (cosine distance) and keyword matches (TF-IDF-like scoring function).
 
 #### Install
 
-With Rust already installed, run:
+If Rust is already installed, run:
 
 ```
 git clone https://github.com/dncc/qpick.git && cd qpick
